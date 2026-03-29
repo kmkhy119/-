@@ -4,8 +4,13 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
 export const metadata = {
-  title: 'Shift Scheduler Pro',
-  description: 'Professional shift scheduling tool',
+  title: '勤務表作成',
+  description: '勤務表作成ツール',
+};
+
+export const viewport = {
+  width: 1200,
+  userScalable: true,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

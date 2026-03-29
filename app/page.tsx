@@ -24,7 +24,9 @@ import {
   ChevronRight,
   Check,
   X,
-  AlertCircle
+  AlertCircle,
+  Maximize,
+  Minimize
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -136,6 +138,28 @@ export default function ShiftScheduler() {
   const [shiftData, setShiftData] = useState<ShiftData>({});
   const [dailyRequirements, setDailyRequirements] = useState<DailyRequirement>({});
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // --- Fullscreen Logic ---
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((e) => {
+        console.error(`Error attempting to enable full-screen mode: ${e.message}`);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
   const [message, setMessage] = useState<{ text: string; type: 'info' | 'error' | 'success' } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [constraints, setConstraints] = useState<Constraints>({
@@ -633,11 +657,11 @@ export default function ShiftScheduler() {
   };
 
   return (
-    <div className="min-h-screen p-4 md:p-8">
-      <div className="max-w-[1600px] mx-auto space-y-6">
+    <div className={`min-h-screen bg-slate-50 ${isFullscreen ? 'p-0' : 'p-0 sm:p-4 md:p-6 lg:p-8'}`}>
+      <div className={`w-full ${isFullscreen ? 'space-y-0' : 'space-y-0 sm:space-y-6'}`}>
         
         {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <header className={`flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 md:p-6 shadow-sm border-b border-slate-200 ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
           <div className="flex items-center gap-3">
             <div className="p-3 bg-indigo-600 rounded-xl text-white">
               <CalendarIcon size={24} />
@@ -667,6 +691,20 @@ export default function ShiftScheduler() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button 
+              onClick={toggleFullscreen}
+              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              title={isFullscreen ? "縮小" : "全画面表示"}
+            >
+              {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+            </button>
+            <button 
+              onClick={exportToCSV}
+              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              title="CSVダウンロード"
+            >
+              <Download size={20} />
+            </button>
             <button 
               onClick={() => setShowSettings(true)}
               className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
@@ -944,7 +982,7 @@ export default function ShiftScheduler() {
         </AnimatePresence>
 
         {/* Main Content */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className={`bg-white shadow-sm border-b border-slate-200 overflow-hidden ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
@@ -1160,25 +1198,6 @@ export default function ShiftScheduler() {
                 </tr>
               </tbody>
             </table>
-          </div>
-        </div>
-
-        {/* Export */}
-        <div className="flex justify-end">
-          <div className="w-full max-w-xs bg-indigo-600 p-4 rounded-xl shadow-lg shadow-indigo-100 text-white space-y-3">
-            <h3 className="text-sm font-bold flex items-center gap-2">
-              <Download size={16} />
-              エクスポート
-            </h3>
-            <p className="text-[11px] text-indigo-100 leading-relaxed">
-              作成した勤務表をCSV形式でダウンロードしたり、印刷用レイアウトで出力できます。
-            </p>
-            <button 
-              onClick={exportToCSV}
-              className="w-full py-1.5 bg-white text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-50 transition-colors"
-            >
-              CSVダウンロード
-            </button>
           </div>
         </div>
       </div>

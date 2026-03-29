@@ -1,5 +1,5 @@
 {
-  "name": "Shift Scheduler Pro",
+  "name": "勤務表作成",
   "description": "A professional shift scheduling tool for 13 staff members with automated shift generation based on daily requirements and requested days off.",
   "requestFramePermissions": []
 }
