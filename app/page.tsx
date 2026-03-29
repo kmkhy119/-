@@ -26,7 +26,8 @@ import {
   X,
   AlertCircle,
   Maximize,
-  Minimize
+  Minimize,
+  Edit2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -49,7 +50,12 @@ interface Staff {
   canDoEarly700: boolean;
   canDoEarly745: boolean;
   canDoLate: boolean;
+  isMaternityLeave: boolean;
   historicalDutyCount: number;
+  historicalEarly700Count: number;
+  historicalEarly745Count: number;
+  historicalLateCount: number;
+  targetOffCount: number;
 }
 
 interface ShiftData {
@@ -110,6 +116,10 @@ interface Constraints {
   maxConsecutiveWork: number;
   dutyWeekendContinuous: boolean;
   earlyAfterDutyNormal: boolean;
+  pairConstraint: {
+    enabled: boolean;
+    staffIds: string[];
+  };
 }
 
 interface FixedAssignment {
@@ -132,7 +142,12 @@ export default function ShiftScheduler() {
       canDoEarly700: true,
       canDoEarly745: true,
       canDoLate: true,
-      historicalDutyCount: 0
+      isMaternityLeave: false,
+      historicalDutyCount: 0,
+      historicalEarly700Count: 0,
+      historicalEarly745Count: 0,
+      historicalLateCount: 0,
+      targetOffCount: 10 // Will be updated by useEffect
     }))
   );
   const [shiftData, setShiftData] = useState<ShiftData>({});
@@ -166,23 +181,46 @@ export default function ShiftScheduler() {
     maxConsecutiveWork: 5,
     dutyWeekendContinuous: true,
     earlyAfterDutyNormal: true,
+    pairConstraint: {
+      enabled: false,
+      staffIds: ['', '', ''],
+    },
   });
   const [fixedAssignments, setFixedAssignments] = useState<FixedAssignment[]>([]);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [fixedCells, setFixedCells] = useState<{[staffId: string]: {[dateStr: string]: boolean}}>({});
   const [newFixed, setNewFixed] = useState<Partial<FixedAssignment>>({
     staffName: '',
-    patternId: 'early700',
+    patternId: 'normal',
     dayOfWeek: 1,
     memo: '',
   });
   const [shiftPatterns, setShiftPatterns] = useState<ShiftPattern[]>([
+    { id: 'normal', name: '通常', label: '勤', color: 'bg-emerald-500', type: 'work' },
     { id: 'duty', name: '当番', label: '当', color: 'bg-rose-600', type: 'work' },
-    { id: 'early700', name: '早番(7:00)', label: '早7', color: 'bg-amber-500', type: 'work' },
-    { id: 'early745', name: '早番(7:45)', label: '早45', color: 'bg-orange-400', type: 'work' },
-    { id: 'normal', name: '通常', label: '通', color: 'bg-emerald-500', type: 'work' },
+    { id: 'early700', name: '早番(7:00)', label: '⑦', color: 'bg-amber-500', type: 'work' },
+    { id: 'early745', name: '早番(7:45)', label: '45', color: 'bg-orange-400', type: 'work' },
     { id: 'late', name: '遅番', label: '遅', color: 'bg-purple-500', type: 'work' },
     { id: 'off', name: '公休', label: '休', color: 'bg-slate-200', type: 'off' },
+    { id: 'paid-leave', name: '年休', label: '年', color: 'bg-slate-200', type: 'off' },
+    { id: 'request-off', name: '希望休み', label: '希', color: 'bg-slate-200', type: 'off' },
+    { id: 'maternity-leave', name: '長期産休', label: '産', color: 'bg-pink-100', type: 'off' },
+    { id: 'sick-leave', name: '病欠', label: '病', color: 'bg-orange-100', type: 'off' },
+    { id: 'long-term-off', name: '長期休暇', label: '長', color: 'bg-emerald-100', type: 'off' },
   ]);
+  const [longTermLeaves, setLongTermLeaves] = useState<{
+    id: string;
+    staffId: string;
+    patternId: string;
+    startDate: string;
+    endDate: string;
+  }[]>([]);
+  const [newLongTermLeave, setNewLongTermLeave] = useState({
+    staffId: '',
+    patternId: 'maternity-leave',
+    startDate: format(new Date(), 'yyyy-MM-dd'),
+    endDate: format(new Date(), 'yyyy-MM-dd'),
+  });
   const [selectedCell, setSelectedCell] = useState<{ staffId: string; dateStr: string } | null>(null);
 
   // --- Date Helpers ---
@@ -190,6 +228,19 @@ export default function ShiftScheduler() {
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
   const daysInMonth = useMemo(() => eachDayOfInterval({ start: monthStart, end: monthEnd }), [monthStart, monthEnd]);
+
+  const defaultOffCount = useMemo(() => {
+    return daysInMonth.filter(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const dayOfWeek = getDay(day);
+      const isHoliday = !!holidays[dateStr];
+      return dayOfWeek === 0 || dayOfWeek === 6 || isHoliday;
+    }).length;
+  }, [daysInMonth, holidays]);
+
+  useEffect(() => {
+    setStaffList(prev => prev.map(s => ({ ...s, targetOffCount: defaultOffCount })));
+  }, [defaultOffCount]);
 
   const getDayName = (date: Date) => format(date, 'E', { locale: ja });
   const isWeekend = (date: Date) => {
@@ -227,7 +278,20 @@ export default function ShiftScheduler() {
   };
 
   const handlePrevMonth = () => setCurrentDate(prev => subMonths(prev, 1));
-  const handleNextMonth = () => setCurrentDate(prev => addMonths(prev, 1));
+  const handleNextMonth = () => {
+    // Update historical counts before moving to next month
+    setStaffList(prev => prev.map(staff => {
+      const stats = getStaffStats(staff.id);
+      return {
+        ...staff,
+        historicalDutyCount: staff.historicalDutyCount + stats.duty,
+        historicalEarly700Count: staff.historicalEarly700Count + stats.early700,
+        historicalEarly745Count: staff.historicalEarly745Count + stats.early745,
+        historicalLateCount: staff.historicalLateCount + stats.late,
+      };
+    }));
+    setCurrentDate(prev => addMonths(prev, 1));
+  };
 
   // --- Scheduling Algorithm ---
 
@@ -255,7 +319,17 @@ export default function ShiftScheduler() {
           const isWeekendOrHoliday = dayOfWeek === 0 || dayOfWeek === 6 || isHoliday;
           
           const current = newShiftData[staff.id][dateStr];
-          if (current !== 'request-off') {
+          
+          // Check for long term leaves first
+          const longTermLeave = longTermLeaves.find(l => 
+            l.staffId === staff.id && 
+            dateStr >= l.startDate && 
+            dateStr <= l.endDate
+          );
+
+          if (longTermLeave) {
+            newShiftData[staff.id][dateStr] = longTermLeave.patternId;
+          } else if (current !== 'request-off' && current !== 'maternity-leave' && current !== 'sick-leave' && current !== 'long-term-off' && current !== 'paid-leave') {
             newShiftData[staff.id][dateStr] = isWeekendOrHoliday ? 'off' : normalPattern;
           }
         });
@@ -321,6 +395,7 @@ export default function ShiftScheduler() {
             const available = staffList.filter(s => 
               s.canDoDuty &&
               newShiftData[s.id][dateStr] !== 'request-off' && 
+              !newFixedCells[s.id]?.[dateStr] && // Don't pick if already has a fixed assignment
               (newShiftData[s.id][dateStr] === 'off' || newShiftData[s.id][dateStr] === normalPattern)
             );
             
@@ -381,6 +456,7 @@ export default function ShiftScheduler() {
               (patternId === early700Pattern ? s.canDoEarly700 : s.canDoEarly745) &&
               (newShiftData[s.id][dateStr] === 'off' || newShiftData[s.id][dateStr] === normalPattern) &&
               newShiftData[s.id][dateStr] !== 'request-off' &&
+              !newFixedCells[s.id]?.[dateStr] && // Don't pick if already has a fixed assignment
               // Day after duty must be normal shift (so not early)
               !(prevDateStr && newShiftData[s.id][prevDateStr] === dutyPattern)
             );
@@ -415,6 +491,7 @@ export default function ShiftScheduler() {
             s.canDoLate &&
             (newShiftData[s.id][dateStr] === 'off' || newShiftData[s.id][dateStr] === normalPattern) &&
             newShiftData[s.id][dateStr] !== 'request-off' &&
+            !newFixedCells[s.id]?.[dateStr] && // Don't pick if already has a fixed assignment
             // Day after duty must be normal shift (so not late)
             !(prevDateStr && newShiftData[s.id][prevDateStr] === dutyPattern)
           );
@@ -436,6 +513,8 @@ export default function ShiftScheduler() {
         const dateStr = format(day, 'yyyy-MM-dd');
         const prevDateStr = idx > 0 ? format(daysInMonth[idx-1], 'yyyy-MM-dd') : null;
         const dayOfWeek = getDay(day);
+        const dayOfMonth = day.getDate();
+        const weekOfMonth = Math.ceil(dayOfMonth / 7);
         
         // Sundays are all off by default (except duty)
         const required = dailyRequirements[dateStr] ?? (dayOfWeek === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT);
@@ -449,12 +528,13 @@ export default function ShiftScheduler() {
           // Need more people
           let available = staffList.filter(s => 
             newShiftData[s.id][dateStr] === 'off' && 
-            newShiftData[s.id][dateStr] !== 'request-off'
+            newShiftData[s.id][dateStr] !== 'request-off' &&
+            newShiftData[s.id][dateStr] !== 'paid-leave'
           );
 
           available.sort((a, b) => {
-            const countA = Object.values(newShiftData[a.id]).filter(v => v !== 'off' && v !== 'request-off').length;
-            const countB = Object.values(newShiftData[b.id]).filter(v => v !== 'off' && v !== 'request-off').length;
+            const countA = Object.values(newShiftData[a.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'work').length;
+            const countB = Object.values(newShiftData[b.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'work').length;
             return countA - countB;
           });
 
@@ -462,26 +542,71 @@ export default function ShiftScheduler() {
             newShiftData[available[i].id][dateStr] = normalPattern;
           }
         } else if (currentWorking.length > required) {
-          // Too many people (likely due to 'normal' default) - set some to 'off'
-          // Don't remove 'duty', 'early', 'late', fixed assignments, or forced normal after duty
+          // Too many people - set some to 'off' ONLY if they haven't reached their target off count
+          // Prioritize work over off as requested
           let candidates = currentWorking.filter(s => 
             newShiftData[s.id][dateStr] === normalPattern &&
-            !fixedAssignments.some(f => f.staffName === s.name && f.patternId === normalPattern) &&
-            !(prevDateStr && newShiftData[s.id][prevDateStr] === dutyPattern) // Don't remove forced normal after duty
+            !fixedAssignments.some(f => 
+              f.staffName === s.name && 
+              f.patternId === normalPattern &&
+              (f.dayOfWeek === undefined || f.dayOfWeek === dayOfWeek) &&
+              (f.weekOfMonth === undefined || f.weekOfMonth === weekOfMonth)
+            ) &&
+            !(prevDateStr && newShiftData[s.id][prevDateStr] === dutyPattern)
           );
 
-          // Sort by total working days (descending) to balance
+          // Sort by current off count (ascending) to give off days to those who have fewer
           candidates.sort((a, b) => {
-            const countA = Object.values(newShiftData[a.id]).filter(v => v !== 'off' && v !== 'request-off').length;
-            const countB = Object.values(newShiftData[b.id]).filter(v => v !== 'off' && v !== 'request-off').length;
-            return countB - countA;
+            const offA = Object.values(newShiftData[a.id]).filter(v => v === 'off' || v === 'request-off' || v === 'paid-leave').length;
+            const offB = Object.values(newShiftData[b.id]).filter(v => v === 'off' || v === 'request-off' || v === 'paid-leave').length;
+            return offA - offB;
           });
 
-          for (let i = 0; i < Math.min(currentWorking.length - required, candidates.length); i++) {
-            newShiftData[candidates[i].id][dateStr] = 'off';
+          for (let i = 0; i < candidates.length; i++) {
+            if (currentWorking.length <= required) break;
+            
+            const staff = candidates[i];
+            const currentOffCount = Object.values(newShiftData[staff.id]).filter(v => v === 'off' || v === 'request-off' || v === 'paid-leave').length;
+            
+            // Only set to off if they are below their target off count
+            if (currentOffCount < staff.targetOffCount) {
+              newShiftData[staff.id][dateStr] = 'off';
+              currentWorking = currentWorking.filter(s => s.id !== staff.id);
+            }
           }
         }
       });
+
+      // 6. Apply Pair Constraint (Ensure at least one of the pair works)
+      if (constraints.pairConstraint.enabled && constraints.pairConstraint.staffIds.some(id => id !== '')) {
+        const activeStaffIds = constraints.pairConstraint.staffIds.filter(id => id !== '');
+        daysInMonth.forEach(day => {
+          const dateStr = format(day, 'yyyy-MM-dd');
+          const dayOfWeek = getDay(day);
+          if (dayOfWeek === 0) return; // Skip Sundays
+
+          const workingStaff = activeStaffIds.filter(id => {
+            const shiftId = newShiftData[id]?.[dateStr];
+            return shiftPatterns.find(p => p.id === shiftId)?.type === 'work';
+          });
+
+          if (workingStaff.length === 0) {
+            // None of the selected staff are working. Force one to work.
+            // Pick the one with fewer total shifts who is NOT on request-off or paid-leave
+            const candidates = activeStaffIds
+              .filter(id => newShiftData[id][dateStr] !== 'request-off' && newShiftData[id][dateStr] !== 'paid-leave')
+              .sort((a, b) => {
+                const countA = Object.values(newShiftData[a]).filter(v => v !== 'off' && v !== 'request-off' && v !== 'paid-leave').length;
+                const countB = Object.values(newShiftData[b]).filter(v => v !== 'off' && v !== 'request-off' && v !== 'paid-leave').length;
+                return countA - countB;
+              });
+
+            if (candidates.length > 0) {
+              newShiftData[candidates[0]][dateStr] = normalPattern;
+            }
+          }
+        });
+      }
 
       setShiftData(newShiftData);
       setMessage({ text: '勤務表の作成が完了しました！', type: 'success' });
@@ -494,7 +619,7 @@ export default function ShiftScheduler() {
   };
 
   const exportToCSV = () => {
-    const headers = ['スタッフ', ...daysInMonth.map(d => format(d, 'd')), '休み数', '当番数', '早7数', '早45数', '通常数', '遅番数'];
+    const headers = ['スタッフ', ...daysInMonth.map(d => format(d, 'd')), '休み数', '当番数', '⑦数', '45数', '通常数', '遅番数', '産休数', '病欠数', '長期休暇数'];
     const rows = staffList.map(staff => {
       const row = [staff.name];
       daysInMonth.forEach(day => {
@@ -509,6 +634,9 @@ export default function ShiftScheduler() {
       row.push(stats.early745.toString());
       row.push(stats.normal.toString());
       row.push(stats.late.toString());
+      row.push(stats.maternityLeave.toString());
+      row.push(stats.sickLeave.toString());
+      row.push(stats.longTermOff.toString());
       return row.join(',');
     });
 
@@ -525,13 +653,34 @@ export default function ShiftScheduler() {
 
   const addFixedAssignment = () => {
     if (!newFixed.staffName || !newFixed.patternId) return;
-    setFixedAssignments(prev => [...prev, newFixed as FixedAssignment]);
+    
+    if (editingIndex !== null) {
+      setFixedAssignments(prev => {
+        const updated = [...prev];
+        updated[editingIndex] = newFixed as FixedAssignment;
+        return updated;
+      });
+      setEditingIndex(null);
+      setMessage({ text: '固定出勤を更新しました。', type: 'success' });
+    } else {
+      setFixedAssignments(prev => [...prev, newFixed as FixedAssignment]);
+      setMessage({ text: '固定出勤を追加しました。', type: 'success' });
+    }
+    
     setNewFixed(prev => ({ ...prev, memo: '' }));
-    setMessage({ text: '固定出勤を追加しました。', type: 'success' });
+  };
+
+  const editFixedAssignment = (index: number) => {
+    setNewFixed(fixedAssignments[index]);
+    setEditingIndex(index);
   };
 
   const removeFixedAssignment = (index: number) => {
     setFixedAssignments(prev => prev.filter((_, i) => i !== index));
+    if (editingIndex === index) {
+      setEditingIndex(null);
+      setNewFixed(prev => ({ ...prev, memo: '' }));
+    }
   };
 
   const handleStaffCountChange = (value: string) => {
@@ -546,7 +695,12 @@ export default function ShiftScheduler() {
           canDoEarly700: true,
           canDoEarly745: true,
           canDoLate: true,
-          historicalDutyCount: 0
+          isMaternityLeave: false,
+          historicalDutyCount: 0,
+          historicalEarly700Count: 0,
+          historicalEarly745Count: 0,
+          historicalLateCount: 0,
+          targetOffCount: defaultOffCount
         }));
         return [...prev, ...additional];
       } else {
@@ -604,7 +758,20 @@ export default function ShiftScheduler() {
             const isHoliday = !!holidays[dateStr];
             const isWeekendOrHoliday = dayOfWeek === 0 || dayOfWeek === 6 || isHoliday;
             
-            newShiftData[staff.id][dateStr] = isWeekendOrHoliday ? 'off' : 'normal';
+            // Check for long-term leaves
+            const activeLeave = longTermLeaves.find(leave => 
+              leave.staffId === staff.id && 
+              dateStr >= leave.startDate && 
+              dateStr <= leave.endDate
+            );
+
+            if (activeLeave) {
+              newShiftData[staff.id][dateStr] = activeLeave.patternId;
+            } else if (staff.isMaternityLeave) {
+              newShiftData[staff.id][dateStr] = 'maternity-leave';
+            } else {
+              newShiftData[staff.id][dateStr] = isWeekendOrHoliday ? 'off' : 'normal';
+            }
             changed = true;
           }
         });
@@ -612,7 +779,7 @@ export default function ShiftScheduler() {
       
       return changed ? newShiftData : prev;
     });
-  }, [staffList, daysInMonth, holidays]);
+  }, [staffList, daysInMonth, holidays, longTermLeaves]);
 
   const getDailyCount = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
@@ -631,7 +798,12 @@ export default function ShiftScheduler() {
       early700: 0,
       early745: 0,
       normal: 0,
-      late: 0
+      late: 0,
+      paidLeave: 0,
+      requestOff: 0,
+      maternityLeave: 0,
+      sickLeave: 0,
+      longTermOff: 0
     };
     
     const staffShifts = shiftData[staffId] || {};
@@ -639,19 +811,19 @@ export default function ShiftScheduler() {
       const dateStr = format(day, 'yyyy-MM-dd');
       const shiftId = staffShifts[dateStr];
       
-      if (shiftId === 'request-off') {
-        stats.off++;
-      } else {
-        const pattern = shiftPatterns.find(p => p.id === shiftId);
-        if (pattern?.type === 'off' || !shiftId) stats.off++;
-        if (shiftId === 'duty') {
-          stats.duty++;
-        }
-        if (shiftId === 'early700') stats.early700++;
-        if (shiftId === 'early745') stats.early745++;
-        if (shiftId === 'normal') stats.normal++;
-        if (shiftId === 'late') stats.late++;
-      }
+      const pattern = shiftPatterns.find(p => p.id === shiftId);
+      if (pattern?.type === 'off' || !shiftId) stats.off++;
+      
+      if (shiftId === 'duty') stats.duty++;
+      if (shiftId === 'early700') stats.early700++;
+      if (shiftId === 'early745') stats.early745++;
+      if (shiftId === 'normal') stats.normal++;
+      if (shiftId === 'late') stats.late++;
+      if (shiftId === 'paid-leave') stats.paidLeave++;
+      if (shiftId === 'request-off') stats.requestOff++;
+      if (shiftId === 'maternity-leave') stats.maternityLeave++;
+      if (shiftId === 'sick-leave') stats.sickLeave++;
+      if (shiftId === 'long-term-off') stats.longTermOff++;
     });
     return stats;
   };
@@ -741,7 +913,7 @@ export default function ShiftScheduler() {
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
-                className="bg-white rounded-2xl p-6 w-full max-w-3xl shadow-2xl space-y-6"
+                className="bg-white rounded-2xl p-6 w-full max-w-5xl shadow-2xl space-y-6"
               >
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-bold flex items-center gap-2">
@@ -812,10 +984,26 @@ export default function ShiftScheduler() {
                         </div>
                         <button 
                           onClick={addFixedAssignment}
-                          className="w-full py-2 bg-indigo-50 text-indigo-600 text-xs font-bold rounded hover:bg-indigo-100 transition-colors"
+                          className={`w-full py-2 text-xs font-bold rounded transition-colors ${editingIndex !== null ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
                         >
-                          追加する
+                          {editingIndex !== null ? '更新する' : '追加する'}
                         </button>
+                        {editingIndex !== null && (
+                          <button 
+                            onClick={() => {
+                              setEditingIndex(null);
+                              setNewFixed({
+                                staffName: '',
+                                patternId: 'normal',
+                                dayOfWeek: 1,
+                                memo: '',
+                              });
+                            }}
+                            className="w-full py-1 text-[10px] text-slate-400 hover:text-slate-600"
+                          >
+                            キャンセル
+                          </button>
+                        )}
                       </div>
 
                       <div className="max-h-[300px] overflow-y-auto space-y-2 border border-slate-100 rounded-xl p-2">
@@ -825,7 +1013,7 @@ export default function ShiftScheduler() {
                           </div>
                         ) : (
                           fixedAssignments.map((fixed, i) => (
-                            <div key={i} className="flex items-center justify-between p-2 bg-white border border-slate-100 rounded text-xs shadow-sm">
+                            <div key={i} className={`flex items-center justify-between p-2 border rounded text-xs shadow-sm transition-colors ${editingIndex === i ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-100'}`}>
                               <div className="flex flex-col gap-1 w-full mr-2">
                                 <div className="flex items-center gap-2">
                                   <span className="font-bold text-slate-700">{fixed.staffName}</span>
@@ -844,9 +1032,14 @@ export default function ShiftScheduler() {
                                   </div>
                                 )}
                               </div>
-                              <button onClick={() => removeFixedAssignment(i)} className="text-slate-300 hover:text-rose-500 flex-shrink-0">
-                                <Trash2 size={14} />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => editFixedAssignment(i)} className="p-1 text-slate-300 hover:text-indigo-500 flex-shrink-0 transition-colors">
+                                  <Edit2 size={14} />
+                                </button>
+                                <button onClick={() => removeFixedAssignment(i)} className="p-1 text-slate-300 hover:text-rose-500 flex-shrink-0 transition-colors">
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           ))
                         )}
@@ -855,34 +1048,188 @@ export default function ShiftScheduler() {
                   </div>
 
                   <div className="pt-4 border-t border-slate-100 space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700">スタッフ人数</label>
+                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                      <CalendarIcon size={16} className="text-indigo-600" />
+                      長期休暇・産休・病欠の設定
+                    </h3>
+                    
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-end gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                          <div className="flex-1 min-w-[120px] space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold ml-1">スタッフ</label>
+                            <select 
+                              value={newLongTermLeave.staffId}
+                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, staffId: e.target.value }))}
+                              className="w-full text-xs p-2 border border-slate-200 rounded bg-white"
+                            >
+                              <option value="">スタッフを選択</option>
+                              {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex-1 min-w-[100px] space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold ml-1">理由</label>
+                            <select 
+                              value={newLongTermLeave.patternId}
+                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, patternId: e.target.value }))}
+                              className="w-full text-xs p-2 border border-slate-200 rounded bg-white"
+                            >
+                              <option value="maternity-leave">産休</option>
+                              <option value="sick-leave">病欠</option>
+                              <option value="long-term-off">長期休暇</option>
+                            </select>
+                          </div>
+                          <div className="flex-1 min-w-[130px] space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold ml-1">開始</label>
+                            <input 
+                              type="date"
+                              value={newLongTermLeave.startDate}
+                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, startDate: e.target.value }))}
+                              className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-[130px] space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold ml-1">終了</label>
+                            <input 
+                              type="date"
+                              value={newLongTermLeave.endDate}
+                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, endDate: e.target.value }))}
+                              className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
+                            />
+                          </div>
+                          <button 
+                            onClick={() => {
+                              if (!newLongTermLeave.staffId) {
+                                setMessage({ text: 'スタッフを選択してください。', type: 'error' });
+                                return;
+                              }
+                              const id = `ltl-${Date.now()}`;
+                              setLongTermLeaves(prev => [...prev, { ...newLongTermLeave, id }]);
+                              
+                              // Automatically update shiftData for the current month if it overlaps
+                              setShiftData(prev => {
+                                const newData = { ...prev };
+                                const staff = staffList.find(s => s.id === newLongTermLeave.staffId);
+                                if (!staff) return prev;
+                                if (!newData[staff.id]) newData[staff.id] = {};
+                                
+                                daysInMonth.forEach(day => {
+                                  const dateStr = format(day, 'yyyy-MM-dd');
+                                  if (dateStr >= newLongTermLeave.startDate && dateStr <= newLongTermLeave.endDate) {
+                                    newData[staff.id][dateStr] = newLongTermLeave.patternId;
+                                  }
+                                });
+                                return newData;
+                              });
+                              
+                              setMessage({ text: '長期休暇を設定しました。', type: 'success' });
+                            }}
+                            className="px-4 py-2 text-xs font-bold bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors h-[34px]"
+                          >
+                            追加
+                          </button>
+                        </div>
+
+                      <div className="max-h-[120px] overflow-y-auto space-y-2 border border-slate-100 rounded-xl p-1.5 bg-slate-50/30">
+                        {longTermLeaves.length === 0 ? (
+                          <div className="text-center py-4 text-slate-400 text-[10px] italic">
+                            設定済みの長期休暇はありません
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
+                            {longTermLeaves.map((leave) => (
+                              <div key={leave.id} className="flex items-center justify-between px-2 py-1 bg-white border border-slate-100 rounded shadow-sm">
+                                <div className="flex items-center gap-1.5 overflow-hidden">
+                                  <span className="font-bold text-slate-700 text-[10px] truncate max-w-[60px]">
+                                    {staffList.find(s => s.id === leave.staffId)?.name}
+                                  </span>
+                                  <span className={`px-1 rounded-[2px] text-[9px] text-white flex-shrink-0 ${shiftPatterns.find(p => p.id === leave.patternId)?.color}`}>
+                                    {shiftPatterns.find(p => p.id === leave.patternId)?.label}
+                                  </span>
+                                  <span className="text-[8px] text-slate-400 truncate">
+                                    {leave.startDate.split('-').slice(1).join('/')}〜
+                                  </span>
+                                </div>
+                                <button 
+                                  onClick={() => {
+                                    setLongTermLeaves(prev => prev.filter(l => l.id !== leave.id));
+                                  }}
+                                  className="p-0.5 text-slate-300 hover:text-rose-500 transition-colors ml-1"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center gap-6">
                       <div className="flex items-center gap-3">
+                        <label className="text-sm font-semibold text-slate-700 whitespace-nowrap">スタッフ人数</label>
                         <input 
-                          type="range"
+                          type="number"
                           min="1"
                           max="30"
                           value={staffCount}
                           onChange={(e) => handleStaffCountChange(e.target.value)}
-                          className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                          className="w-20 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                         />
-                        <span className="text-lg font-bold text-indigo-600 w-8 text-center">{staffCount}</span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <label className="text-sm font-semibold text-slate-700 whitespace-nowrap">最大連勤数</label>
+                        <input 
+                          type="number"
+                          min="1"
+                          value={constraints.maxConsecutiveWork}
+                          onChange={(e) => setConstraints(prev => ({ ...prev, maxConsecutiveWork: parseInt(e.target.value) || 1 }))}
+                          className="w-20 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                        />
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700">最大連勤数</label>
-                      <input 
-                        type="number"
-                        value={constraints.maxConsecutiveWork}
-                        onChange={(e) => setConstraints(prev => ({ ...prev, maxConsecutiveWork: parseInt(e.target.value) || 1 }))}
-                        className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                      />
+                    <div className="pt-4 border-t border-slate-100 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-semibold text-slate-700">ペア出勤条件</label>
+                        <button 
+                          onClick={() => setConstraints(prev => ({ 
+                            ...prev, 
+                            pairConstraint: { ...prev.pairConstraint, enabled: !prev.pairConstraint.enabled } 
+                          }))}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${constraints.pairConstraint.enabled ? 'bg-indigo-600' : 'bg-slate-200'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${constraints.pairConstraint.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                      
+                      {constraints.pairConstraint.enabled && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                          {[0, 1, 2].map(index => (
+                            <select 
+                              key={index}
+                              value={constraints.pairConstraint.staffIds[index]}
+                              onChange={(e) => setConstraints(prev => {
+                                const newIds = [...prev.pairConstraint.staffIds];
+                                newIds[index] = e.target.value;
+                                return { 
+                                  ...prev, 
+                                  pairConstraint: { ...prev.pairConstraint, staffIds: newIds } 
+                                };
+                              })}
+                              className="text-xs p-2 border border-slate-200 rounded-lg bg-white"
+                            >
+                              <option value="">スタッフ{index + 1}を選択</option>
+                              {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
 
-                <div className="pt-4 border-t border-slate-100 space-y-3">
+                  <div className="pt-4 border-t border-slate-100 space-y-3">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">データリセット</h3>
                   <div className="grid grid-cols-2 gap-3">
                     <button 
@@ -930,21 +1277,12 @@ export default function ShiftScheduler() {
                       onClick={() => assignShift(selectedCell.staffId, selectedCell.dateStr, pattern.id)}
                       className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors group"
                     >
-                      <div className={`w-8 h-8 rounded-lg ${pattern.color} text-white flex items-center justify-center text-xs font-bold`}>
+                        <div className={`w-8 h-8 rounded-lg ${pattern.color} ${pattern.type === 'work' ? 'text-white' : (['paid-leave', 'request-off'].includes(pattern.id) ? 'text-rose-600' : 'text-slate-600')} flex items-center justify-center text-xs font-bold shadow-sm`}>
                         {pattern.label}
                       </div>
                       <span className="text-sm font-medium text-slate-700 group-hover:text-indigo-600">{pattern.name}</span>
                     </button>
                   ))}
-                  <button 
-                    onClick={() => assignShift(selectedCell.staffId, selectedCell.dateStr, 'request-off')}
-                    className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors group"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center text-[10px] font-black">
-                      希
-                    </div>
-                    <span className="text-sm font-medium text-slate-700 group-hover:text-rose-600">希望休み</span>
-                  </button>
                   <div className="h-px bg-slate-100 my-1" />
                   <button 
                     onClick={() => assignShift(selectedCell.staffId, selectedCell.dateStr, 'clear')}
@@ -1039,6 +1377,7 @@ export default function ShiftScheduler() {
                     .map(f => f.memo)
                     .filter((v, i, a) => a.indexOf(v) === i)
                     .join(', ');
+                  const stats = getStaffStats(staff.id);
                   return (
                     <tr key={staff.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="sticky left-0 z-10 bg-white p-2 font-medium text-slate-700 border-r border-slate-200 group-hover:bg-slate-50">
@@ -1054,71 +1393,54 @@ export default function ShiftScheduler() {
                                   const newName = e.target.value;
                                   setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, name: newName } : s));
                                 }}
-                                className="bg-transparent focus:outline-none focus:bg-white px-1 rounded border border-transparent focus:border-slate-200 w-full font-bold"
+                                className="bg-transparent focus:outline-none focus:bg-white px-1 rounded border border-transparent focus:border-slate-200 w-32 font-bold"
                               />
-                            </div>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8">
-                              <label className="flex items-center gap-1.5 cursor-pointer group/toggle">
-                                <input 
-                                  type="checkbox"
-                                  checked={staff.canDoDuty}
-                                  onChange={(e) => {
-                                    const checked = e.target.checked;
-                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, canDoDuty: checked } : s));
-                                  }}
-                                  className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                />
-                                <span className="text-[10px] text-slate-500 group-hover/toggle:text-slate-700">当</span>
-                              </label>
-                              <label className="flex items-center gap-1.5 cursor-pointer group/toggle">
-                                <input 
-                                  type="checkbox"
-                                  checked={staff.canDoEarly700}
-                                  onChange={(e) => {
-                                    const checked = e.target.checked;
-                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, canDoEarly700: checked } : s));
-                                  }}
-                                  className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                />
-                                <span className="text-[10px] text-slate-500 group-hover/toggle:text-slate-700">早7</span>
-                              </label>
-                              <label className="flex items-center gap-1.5 cursor-pointer group/toggle">
-                                <input 
-                                  type="checkbox"
-                                  checked={staff.canDoEarly745}
-                                  onChange={(e) => {
-                                    const checked = e.target.checked;
-                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, canDoEarly745: checked } : s));
-                                  }}
-                                  className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                />
-                                <span className="text-[10px] text-slate-500 group-hover/toggle:text-slate-700">早45</span>
-                              </label>
-                              <label className="flex items-center gap-1.5 cursor-pointer group/toggle">
-                                <input 
-                                  type="checkbox"
-                                  checked={staff.canDoLate}
-                                  onChange={(e) => {
-                                    const checked = e.target.checked;
-                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, canDoLate: checked } : s));
-                                  }}
-                                  className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                />
-                                <span className="text-[10px] text-slate-500 group-hover/toggle:text-slate-700">遅</span>
-                              </label>
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] text-slate-400">当累:</span>
+                              <div className="flex items-center gap-1 ml-2 shrink-0">
+                                <span className="text-[10px] text-slate-400 font-bold">休み:</span>
                                 <input 
                                   type="number"
                                   min="0"
-                                  value={staff.historicalDutyCount}
+                                  value={staff.targetOffCount}
                                   onChange={(e) => {
                                     const count = parseInt(e.target.value) || 0;
-                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, historicalDutyCount: count } : s));
+                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, targetOffCount: count } : s));
                                   }}
-                                  className="w-8 text-[10px] bg-slate-50 border border-slate-200 rounded px-1 text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  className="w-10 text-xs bg-indigo-50 border border-indigo-200 rounded px-1 text-center focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-indigo-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
                               </div>
+                            </div>
+                            <div className="flex items-center gap-4 pl-8">
+                              {[
+                                { id: 'duty', label: '当', checked: staff.canDoDuty, count: staff.historicalDutyCount, setter: 'canDoDuty', countSetter: 'historicalDutyCount' },
+                                { id: 'early700', label: '⑦', checked: staff.canDoEarly700, count: staff.historicalEarly700Count, setter: 'canDoEarly700', countSetter: 'historicalEarly700Count' },
+                                { id: 'early745', label: '45', checked: staff.canDoEarly745, count: staff.historicalEarly745Count, setter: 'canDoEarly745', countSetter: 'historicalEarly745Count' },
+                                { id: 'late', label: '遅', checked: staff.canDoLate, count: staff.historicalLateCount, setter: 'canDoLate', countSetter: 'historicalLateCount' },
+                              ].map(item => (
+                                <div key={item.id} className="flex flex-col items-center gap-1">
+                                  <input 
+                                    type="checkbox"
+                                    checked={item.checked}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked;
+                                      setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, [item.setter]: checked } : s));
+                                    }}
+                                    className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                  />
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[10px] text-slate-500 font-bold">{item.label}</span>
+                                    <input 
+                                      type="number"
+                                      min="0"
+                                      value={item.count}
+                                      onChange={(e) => {
+                                        const count = parseInt(e.target.value) || 0;
+                                        setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, [item.countSetter]: count } : s));
+                                      }}
+                                      className="w-10 text-xs bg-slate-50 border border-slate-200 rounded px-1 text-center focus:outline-none focus:ring-1 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    />
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         </div>
@@ -1137,20 +1459,12 @@ export default function ShiftScheduler() {
                             {pattern && (
                               <motion.div 
                                 layoutId={`shift-${staff.id}-${dateStr}`}
-                                className={`w-8 h-8 rounded-lg ${pattern.color} ${pattern.type === 'work' ? 'text-white' : 'text-slate-600'} flex items-center justify-center text-xs font-bold shadow-sm relative`}
+                                className={`w-8 h-8 rounded-lg ${pattern.color} ${pattern.type === 'work' ? 'text-white' : (['paid-leave', 'request-off'].includes(pattern.id) ? 'text-rose-600' : 'text-slate-600')} flex items-center justify-center text-xs font-bold shadow-sm relative`}
                               >
                                 {pattern.label}
                                 {fixedCells[staff.id]?.[dateStr] && (
                                   <div className="absolute -top-1.5 -right-1.5 text-[10px] text-indigo-600 drop-shadow-sm">★</div>
                                 )}
-                              </motion.div>
-                            )}
-                            {shiftId === 'request-off' && (
-                              <motion.div 
-                                layoutId={`shift-${staff.id}-${dateStr}`}
-                                className="w-8 h-8 rounded-lg bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center text-[10px] font-black"
-                              >
-                                希
                               </motion.div>
                             )}
                             {!shiftId ? (
@@ -1165,12 +1479,21 @@ export default function ShiftScheduler() {
                         const stats = getStaffStats(staff.id);
                         return (
                           <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                            <div className="text-left">休: <span className="font-bold">{stats.off}</span></div>
+                            <div className="text-left">休: <span className={`font-bold ${stats.off > staff.targetOffCount ? 'text-rose-600' : 'text-slate-700'}`}>{stats.off}</span> / {staff.targetOffCount}</div>
                             <div className="text-left">当: <span className="font-bold">{stats.duty}</span></div>
-                            <div className="text-left">早7: <span className="font-bold">{stats.early700}</span></div>
-                            <div className="text-left">早45: <span className="font-bold">{stats.early745}</span></div>
+                            <div className="text-left">⑦: <span className="font-bold">{stats.early700}</span></div>
+                            <div className="text-left">45: <span className="font-bold">{stats.early745}</span></div>
                             <div className="text-left">通: <span className="font-bold">{stats.normal}</span></div>
                             <div className="text-left">遅: <span className="font-bold">{stats.late}</span></div>
+                            {stats.maternityLeave > 0 && (
+                              <div className="text-left text-pink-600">産: <span className="font-bold">{stats.maternityLeave}</span></div>
+                            )}
+                            {stats.sickLeave > 0 && (
+                              <div className="text-left text-orange-600">病: <span className="font-bold">{stats.sickLeave}</span></div>
+                            )}
+                            {stats.longTermOff > 0 && (
+                              <div className="text-left text-emerald-600">長: <span className="font-bold">{stats.longTermOff}</span></div>
+                            )}
                           </div>
                         );
                       })()}
@@ -1188,8 +1511,9 @@ export default function ShiftScheduler() {
                     const count = getDailyCount(day);
                     const req = dailyRequirements[format(day, 'yyyy-MM-dd')] ?? DEFAULT_DAILY_REQUIREMENT;
                     const isShort = count < req;
+                    const isOver = count > req;
                     return (
-                      <td key={day.toISOString()} className={`p-2 text-center border-r border-slate-200 ${isShort ? 'text-rose-600 bg-rose-50' : 'text-indigo-600'}`}>
+                      <td key={day.toISOString()} className={`p-2 text-center border-r border-slate-200 ${(isShort || isOver) ? 'text-rose-600 bg-rose-50' : 'text-indigo-600'}`}>
                         {count}
                       </td>
                     );

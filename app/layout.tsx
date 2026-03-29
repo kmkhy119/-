@@ -6,6 +6,11 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 export const metadata = {
   title: '勤務表作成',
   description: '勤務表作成ツール',
+  icons: {
+    apple: '/icon.png',
+    icon: '/icon.png',
+  },
+  manifest: '/manifest.json',
 };
 
 export const viewport = {
