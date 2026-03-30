@@ -508,15 +508,11 @@ export default function ShiftScheduler() {
         }
       });
 
-      // 5. Adjust to meet daily requirements (Fill or Reduce)
+      // 5. Adjust to meet daily requirements and strictly match target off counts
       daysInMonth.forEach((day, idx) => {
         const dateStr = format(day, 'yyyy-MM-dd');
-        const prevDateStr = idx > 0 ? format(daysInMonth[idx-1], 'yyyy-MM-dd') : null;
         const dayOfWeek = getDay(day);
-        const dayOfMonth = day.getDate();
-        const weekOfMonth = Math.ceil(dayOfMonth / 7);
         
-        // Sundays are all off by default (except duty)
         const required = dailyRequirements[dateStr] ?? (dayOfWeek === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT);
         
         let currentWorking = staffList.filter(s => {
@@ -532,52 +528,47 @@ export default function ShiftScheduler() {
             newShiftData[s.id][dateStr] !== 'paid-leave'
           );
 
+          // Sort by current off count (descending) to pick those who have too many off days
           available.sort((a, b) => {
-            const countA = Object.values(newShiftData[a.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'work').length;
-            const countB = Object.values(newShiftData[b.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'work').length;
-            return countA - countB;
+            const offA = Object.values(newShiftData[a.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off').length;
+            const offB = Object.values(newShiftData[b.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off').length;
+            return offB - offA;
           });
 
           for (let i = 0; i < Math.min(required - currentWorking.length, available.length); i++) {
             newShiftData[available[i].id][dateStr] = normalPattern;
           }
-        } else if (currentWorking.length > required) {
-          // Too many people - set some to 'off' ONLY if they haven't reached their target off count
-          // Prioritize work over off as requested
-          let candidates = currentWorking.filter(s => 
-            newShiftData[s.id][dateStr] === normalPattern &&
-            !fixedAssignments.some(f => 
-              f.staffName === s.name && 
-              f.patternId === normalPattern &&
-              (f.dayOfWeek === undefined || f.dayOfWeek === dayOfWeek) &&
-              (f.weekOfMonth === undefined || f.weekOfMonth === weekOfMonth)
-            ) &&
-            !(prevDateStr && newShiftData[s.id][prevDateStr] === dutyPattern)
-          );
+        }
+      });
 
-          // Sort by current off count (ascending) to give off days to those who have fewer
-          candidates.sort((a, b) => {
-            const offA = Object.values(newShiftData[a.id]).filter(v => v === 'off' || v === 'request-off' || v === 'paid-leave').length;
-            const offB = Object.values(newShiftData[b.id]).filter(v => v === 'off' || v === 'request-off' || v === 'paid-leave').length;
-            return offA - offB;
-          });
+      // 6. Final Adjustment: Strictly match target off count for each staff
+      staffList.forEach(staff => {
+        const currentOffs = Object.values(newShiftData[staff.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off');
+        const currentOffCount = currentOffs.length;
+        const diff = currentOffCount - staff.targetOffCount;
 
-          for (let i = 0; i < candidates.length; i++) {
-            if (currentWorking.length <= required) break;
-            
-            const staff = candidates[i];
-            const currentOffCount = Object.values(newShiftData[staff.id]).filter(v => v === 'off' || v === 'request-off' || v === 'paid-leave').length;
-            
-            // Only set to off if they are below their target off count
-            if (currentOffCount < staff.targetOffCount) {
-              newShiftData[staff.id][dateStr] = 'off';
-              currentWorking = currentWorking.filter(s => s.id !== staff.id);
-            }
+        if (diff > 0) {
+          // Too many off days, convert some 'off' to 'normal'
+          const offDays = daysInMonth.filter(day => newShiftData[staff.id][format(day, 'yyyy-MM-dd')] === 'off');
+          // Prioritize days with low staff count
+          offDays.sort((a, b) => getDailyCount(a) - getDailyCount(b));
+          
+          for (let i = 0; i < diff && i < offDays.length; i++) {
+            newShiftData[staff.id][format(offDays[i], 'yyyy-MM-dd')] = normalPattern;
+          }
+        } else if (diff < 0) {
+          // Too few off days, convert some 'normal' to 'off'
+          const workDays = daysInMonth.filter(day => newShiftData[staff.id][format(day, 'yyyy-MM-dd')] === normalPattern);
+          // Prioritize days with high staff count
+          workDays.sort((a, b) => getDailyCount(b) - getDailyCount(a));
+
+          for (let i = 0; i < Math.abs(diff) && i < workDays.length; i++) {
+            newShiftData[staff.id][format(workDays[i], 'yyyy-MM-dd')] = 'off';
           }
         }
       });
 
-      // 6. Apply Pair Constraint (Ensure at least one of the pair works)
+      // 7. Apply Pair Constraint (Ensure at least one of the pair works)
       if (constraints.pairConstraint.enabled && constraints.pairConstraint.staffIds.some(id => id !== '')) {
         const activeStaffIds = constraints.pairConstraint.staffIds.filter(id => id !== '');
         daysInMonth.forEach(day => {
@@ -719,13 +710,7 @@ export default function ShiftScheduler() {
           Object.keys(newShiftData[staff.id]).forEach(dateStr => {
             const shiftId = newShiftData[staff.id][dateStr];
             if (shiftId === 'request-off') return;
-            
-            const date = new Date(dateStr);
-            const dayOfWeek = getDay(date);
-            const isHoliday = !!holidays[dateStr];
-            const isWeekendOrHoliday = dayOfWeek === 0 || dayOfWeek === 6 || isHoliday;
-            
-            newShiftData[staff.id][dateStr] = isWeekendOrHoliday ? 'off' : 'normal';
+            newShiftData[staff.id][dateStr] = 'off';
           });
         }
       }
@@ -770,7 +755,7 @@ export default function ShiftScheduler() {
             } else if (staff.isMaternityLeave) {
               newShiftData[staff.id][dateStr] = 'maternity-leave';
             } else {
-              newShiftData[staff.id][dateStr] = isWeekendOrHoliday ? 'off' : 'normal';
+              newShiftData[staff.id][dateStr] = 'off';
             }
             changed = true;
           }
@@ -1320,12 +1305,12 @@ export default function ShiftScheduler() {
         </AnimatePresence>
 
         {/* Main Content */}
-        <div className={`bg-white shadow-sm border-b border-slate-200 overflow-hidden ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
-          <div className="overflow-x-auto">
+        <div className={`bg-white shadow-sm overflow-hidden ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
+          <div className="overflow-x-auto max-h-[calc(100vh-200px)]">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="sticky left-0 z-20 bg-slate-50 p-2 text-left font-semibold text-slate-600 border-r border-slate-200 min-w-[240px]">
+                <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-40">
+                  <th className="sticky left-0 z-50 bg-slate-50 p-2 text-left font-semibold text-slate-600 border-r border-slate-200 min-w-[240px]">
                     スタッフ
                   </th>
                   {daysInMonth.map(day => (
@@ -1348,8 +1333,8 @@ export default function ShiftScheduler() {
               </thead>
               <tbody>
                 {/* Daily Requirements Row */}
-                <tr className="bg-indigo-50/30 border-b border-slate-200">
-                  <td className="sticky left-0 z-10 bg-indigo-50 p-2 font-semibold text-indigo-900 border-r border-slate-200">
+                <tr className="bg-indigo-50/50 border-b border-slate-200 sticky top-[53px] z-30">
+                  <td className="sticky left-0 z-40 bg-indigo-50 p-2 font-bold text-indigo-900 border-r border-slate-200 text-xs">
                     必要人数
                   </td>
                   {daysInMonth.map(day => {
@@ -1362,12 +1347,38 @@ export default function ShiftScheduler() {
                           max={staffList.length}
                           value={dailyRequirements[dateStr] ?? (getDay(day) === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT)}
                           onChange={(e) => updateRequirement(day, e.target.value)}
-                          className="w-full text-center bg-transparent font-bold text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded"
+                          className="w-full text-center bg-transparent font-bold text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded text-sm"
                         />
                       </td>
                     );
                   })}
                   <td className="bg-indigo-50"></td>
+                </tr>
+
+                {/* Actual Count Row */}
+                <tr className="bg-slate-50 border-b border-slate-200 sticky top-[93px] z-30">
+                  <td className="sticky left-0 z-40 bg-slate-50 p-2 font-bold text-slate-600 border-r border-slate-200 text-xs">
+                    現在の勤務
+                  </td>
+                  {daysInMonth.map(day => {
+                    const count = getDailyCount(day);
+                    const req = dailyRequirements[format(day, 'yyyy-MM-dd')] ?? (getDay(day) === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT);
+                    const isShort = count < req;
+                    const isOver = count > req;
+                    return (
+                      <td 
+                        key={day.toISOString()} 
+                        className={`p-2 text-center border-r border-slate-200 text-sm font-bold ${
+                          isShort ? 'text-rose-600 bg-rose-100 animate-pulse' : 
+                          isOver ? 'text-amber-600 bg-amber-50' : 
+                          'text-emerald-600 bg-emerald-50'
+                        }`}
+                      >
+                        {count}
+                      </td>
+                    );
+                  })}
+                  <td className="bg-slate-50"></td>
                 </tr>
 
                 {/* Staff Rows */}
@@ -1501,25 +1512,6 @@ export default function ShiftScheduler() {
                   </tr>
                 );
               })}
-
-                {/* Actual Count Row */}
-                <tr className="bg-slate-50 font-bold">
-                  <td className="sticky left-0 z-10 bg-slate-50 p-2 text-slate-600 border-r border-slate-200">
-                    合計出勤
-                  </td>
-                  {daysInMonth.map(day => {
-                    const count = getDailyCount(day);
-                    const req = dailyRequirements[format(day, 'yyyy-MM-dd')] ?? DEFAULT_DAILY_REQUIREMENT;
-                    const isShort = count < req;
-                    const isOver = count > req;
-                    return (
-                      <td key={day.toISOString()} className={`p-2 text-center border-r border-slate-200 ${(isShort || isOver) ? 'text-rose-600 bg-rose-50' : 'text-indigo-600'}`}>
-                        {count}
-                      </td>
-                    );
-                  })}
-                  <td className="bg-slate-50"></td>
-                </tr>
               </tbody>
             </table>
           </div>
