@@ -508,11 +508,22 @@ export default function ShiftScheduler() {
         }
       });
 
-      // 5. Adjust to meet daily requirements and strictly match target off counts
-      daysInMonth.forEach((day, idx) => {
+      // Helper to get daily count from the new data being built
+      const getNewDailyCount = (date: Date, currentData: ShiftData) => {
+        const dateStr = format(date, 'yyyy-MM-dd');
+        let count = 0;
+        staffList.forEach(staff => {
+          const shiftId = currentData[staff.id]?.[dateStr];
+          const pattern = shiftPatterns.find(p => p.id === shiftId);
+          if (pattern?.type === 'work') count++;
+        });
+        return count;
+      };
+
+      // 5. Adjust to meet daily requirements
+      daysInMonth.forEach((day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
         const dayOfWeek = getDay(day);
-        
         const required = dailyRequirements[dateStr] ?? (dayOfWeek === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT);
         
         let currentWorking = staffList.filter(s => {
@@ -523,15 +534,13 @@ export default function ShiftScheduler() {
         if (currentWorking.length < required) {
           // Need more people
           let available = staffList.filter(s => 
-            newShiftData[s.id][dateStr] === 'off' && 
-            newShiftData[s.id][dateStr] !== 'request-off' &&
-            newShiftData[s.id][dateStr] !== 'paid-leave'
+            newShiftData[s.id][dateStr] === 'off' || !newShiftData[s.id][dateStr]
           );
 
           // Sort by current off count (descending) to pick those who have too many off days
           available.sort((a, b) => {
-            const offA = Object.values(newShiftData[a.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off').length;
-            const offB = Object.values(newShiftData[b.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off').length;
+            const offA = Object.values(newShiftData[a.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off' || !v).length;
+            const offB = Object.values(newShiftData[b.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off' || !v).length;
             return offB - offA;
           });
 
@@ -543,15 +552,19 @@ export default function ShiftScheduler() {
 
       // 6. Final Adjustment: Strictly match target off count for each staff
       staffList.forEach(staff => {
-        const currentOffs = Object.values(newShiftData[staff.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off');
+        const currentOffs = Object.values(newShiftData[staff.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off' || !v);
         const currentOffCount = currentOffs.length;
         const diff = currentOffCount - staff.targetOffCount;
 
         if (diff > 0) {
           // Too many off days, convert some 'off' to 'normal'
-          const offDays = daysInMonth.filter(day => newShiftData[staff.id][format(day, 'yyyy-MM-dd')] === 'off');
+          const offDays = daysInMonth.filter(day => {
+            const val = newShiftData[staff.id][format(day, 'yyyy-MM-dd')];
+            return val === 'off' || !val;
+          });
+          
           // Prioritize days with low staff count
-          offDays.sort((a, b) => getDailyCount(a) - getDailyCount(b));
+          offDays.sort((a, b) => getNewDailyCount(a, newShiftData) - getNewDailyCount(b, newShiftData));
           
           for (let i = 0; i < diff && i < offDays.length; i++) {
             newShiftData[staff.id][format(offDays[i], 'yyyy-MM-dd')] = normalPattern;
@@ -559,8 +572,9 @@ export default function ShiftScheduler() {
         } else if (diff < 0) {
           // Too few off days, convert some 'normal' to 'off'
           const workDays = daysInMonth.filter(day => newShiftData[staff.id][format(day, 'yyyy-MM-dd')] === normalPattern);
+          
           // Prioritize days with high staff count
-          workDays.sort((a, b) => getDailyCount(b) - getDailyCount(a));
+          workDays.sort((a, b) => getNewDailyCount(b, newShiftData) - getNewDailyCount(a, newShiftData));
 
           for (let i = 0; i < Math.abs(diff) && i < workDays.length; i++) {
             newShiftData[staff.id][format(workDays[i], 'yyyy-MM-dd')] = 'off';
@@ -814,11 +828,11 @@ export default function ShiftScheduler() {
   };
 
   return (
-    <div className={`min-h-screen bg-slate-50 ${isFullscreen ? 'p-0' : 'p-0 sm:p-4 md:p-6 lg:p-8'}`}>
-      <div className={`w-full ${isFullscreen ? 'space-y-0' : 'space-y-0 sm:space-y-6'}`}>
+    <div className={`min-h-screen bg-slate-50 flex flex-col ${isFullscreen ? 'p-0 h-screen' : 'p-0 sm:p-4 md:p-6 lg:p-8'}`}>
+      <div className={`w-full flex-1 flex flex-col ${isFullscreen ? 'space-y-0' : 'space-y-0 sm:space-y-6'}`}>
         
         {/* Header */}
-        <header className={`flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 md:p-6 shadow-sm border-b border-slate-200 ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
+        <header className={`flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 md:p-6 shadow-sm border-b border-slate-200 shrink-0 ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
           <div className="flex items-center gap-3">
             <div className="p-3 bg-indigo-600 rounded-xl text-white">
               <CalendarIcon size={24} />
@@ -1305,18 +1319,18 @@ export default function ShiftScheduler() {
         </AnimatePresence>
 
         {/* Main Content */}
-        <div className={`bg-white shadow-sm overflow-hidden ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
-          <div className="overflow-x-auto max-h-[calc(100vh-200px)]">
-            <table className="w-full border-collapse">
+        <div className={`bg-white shadow-sm overflow-hidden flex-1 flex flex-col ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
+          <div className="overflow-auto flex-1">
+            <table className="w-full border-collapse table-fixed">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-40">
-                  <th className="sticky left-0 z-50 bg-slate-50 p-2 text-left font-semibold text-slate-600 border-r border-slate-200 min-w-[240px]">
+                <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-40 h-[53px]">
+                  <th className="sticky left-0 z-50 bg-slate-50 p-2 text-left font-semibold text-slate-600 border-r border-slate-200 w-[240px]">
                     スタッフ
                   </th>
                   {daysInMonth.map(day => (
                     <th 
                       key={day.toISOString()} 
-                      className={`p-2 text-center border-r border-slate-200 min-w-[45px] ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'bg-slate-100/50' : ''}`}
+                      className={`p-1 text-center border-r border-slate-200 w-[45px] ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'bg-slate-100/50' : ''}`}
                     >
                       <div className={`text-[10px] uppercase font-bold ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'text-rose-500' : 'text-slate-400'}`}>
                         {getDayName(day)}
@@ -1333,7 +1347,7 @@ export default function ShiftScheduler() {
               </thead>
               <tbody>
                 {/* Daily Requirements Row */}
-                <tr className="bg-indigo-50/50 border-b border-slate-200 sticky top-[53px] z-30">
+                <tr className="bg-indigo-50/50 border-b border-slate-200 sticky top-[53px] z-30 h-[40px]">
                   <td className="sticky left-0 z-40 bg-indigo-50 p-2 font-bold text-indigo-900 border-r border-slate-200 text-xs">
                     必要人数
                   </td>
@@ -1356,7 +1370,7 @@ export default function ShiftScheduler() {
                 </tr>
 
                 {/* Actual Count Row */}
-                <tr className="bg-slate-50 border-b border-slate-200 sticky top-[93px] z-30">
+                <tr className="bg-slate-50 border-b border-slate-200 sticky top-[93px] z-30 h-[40px]">
                   <td className="sticky left-0 z-40 bg-slate-50 p-2 font-bold text-slate-600 border-r border-slate-200 text-xs">
                     現在の勤務
                   </td>
