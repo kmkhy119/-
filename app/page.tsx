@@ -9,7 +9,10 @@ import {
   getDay, 
   isSameDay,
   addMonths,
-  subMonths
+  subMonths,
+  isSameMonth,
+  subDays,
+  addDays
 } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { 
@@ -309,12 +312,12 @@ export default function ShiftScheduler() {
           const dateStr = format(day, 'yyyy-MM-dd');
           const dayOfWeek = getDay(day);
           const isHoliday = !!holidays[dateStr];
-          const isWeekendOrHoliday = dayOfWeek === 0 || dayOfWeek === 6 || isHoliday;
+          const isSunday = dayOfWeek === 0;
           
           const current = newShiftData[staff.id][dateStr];
           
           if (current !== 'request-off' && current !== 'maternity-leave' && current !== 'sick-long-term' && current !== 'paid-leave') {
-            newShiftData[staff.id][dateStr] = isWeekendOrHoliday ? 'off' : normalPattern;
+            newShiftData[staff.id][dateStr] = isSunday ? 'off' : normalPattern;
           }
         });
       });
@@ -463,9 +466,7 @@ export default function ShiftScheduler() {
         const dateStr = format(day, 'yyyy-MM-dd');
         const prevDateStr = idx > 0 ? format(daysInMonth[idx-1], 'yyyy-MM-dd') : null;
         const dayOfWeek = getDay(day);
-        const isHoliday = !!holidays[dateStr];
-        
-        if (dayOfWeek === 0 || isHoliday) return;
+        if (dayOfWeek === 0) return;
 
         // Check if someone is already assigned late shift (fixed)
         let alreadyAssigned = staffList.find(s => newShiftData[s.id][dateStr] === latePattern);
@@ -504,6 +505,32 @@ export default function ShiftScheduler() {
         return count;
       };
 
+      // Helper to check consecutive work days
+      const getConsecutiveWork = (staffId: string, date: Date, currentData: ShiftData) => {
+        let count = 0;
+        // Check backwards
+        let curr = subDays(date, 1);
+        while (isSameMonth(curr, currentDate)) {
+          const dStr = format(curr, 'yyyy-MM-dd');
+          const p = shiftPatterns.find(pat => pat.id === currentData[staffId]?.[dStr]);
+          if (p?.type === 'work') {
+            count++;
+            curr = subDays(curr, 1);
+          } else break;
+        }
+        // Check forwards
+        curr = addDays(date, 1);
+        while (isSameMonth(curr, currentDate)) {
+          const dStr = format(curr, 'yyyy-MM-dd');
+          const p = shiftPatterns.find(pat => pat.id === currentData[staffId]?.[dStr]);
+          if (p?.type === 'work') {
+            count++;
+            curr = addDays(curr, 1);
+          } else break;
+        }
+        return count;
+      };
+
       // 5. Adjust to meet daily requirements
       daysInMonth.forEach((day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
@@ -536,8 +563,12 @@ export default function ShiftScheduler() {
 
       // 6. Final Adjustment: Strictly match target off count for each staff
       staffList.forEach(staff => {
-        const currentOffs = Object.values(newShiftData[staff.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off' || !v);
-        const currentOffCount = currentOffs.length;
+        const currentOffCount = daysInMonth.filter(day => {
+          const val = newShiftData[staff.id][format(day, 'yyyy-MM-dd')];
+          const pattern = shiftPatterns.find(p => p.id === val);
+          return pattern?.type === 'off' || !val;
+        }).length;
+        
         const diff = currentOffCount - staff.targetOffCount;
 
         if (diff > 0) {
@@ -547,8 +578,22 @@ export default function ShiftScheduler() {
             return val === 'off' || !val;
           });
           
-          // Prioritize days with low staff count
-          offDays.sort((a, b) => getNewDailyCount(a, newShiftData) - getNewDailyCount(b, newShiftData));
+          // Prioritize days with low staff count, but avoid weekends/holidays if possible
+          // Also avoid creating long consecutive work chains
+          offDays.sort((a, b) => {
+            const dateA = format(a, 'yyyy-MM-dd');
+            const dateB = format(b, 'yyyy-MM-dd');
+            const isWHA = getDay(a) === 0 || getDay(a) === 6 || !!holidays[dateA];
+            const isWHB = getDay(b) === 0 || getDay(b) === 6 || !!holidays[dateB];
+            
+            // 1. Avoid violating max consecutive work
+            const consA = getConsecutiveWork(staff.id, a, newShiftData);
+            const consB = getConsecutiveWork(staff.id, b, newShiftData);
+            if (consA !== consB) return consA - consB; // Lower consecutive work first
+            
+            if (isWHA !== isWHB) return isWHA ? 1 : -1; // Weekdays first
+            return getNewDailyCount(a, newShiftData) - getNewDailyCount(b, newShiftData);
+          });
           
           for (let i = 0; i < diff && i < offDays.length; i++) {
             newShiftData[staff.id][format(offDays[i], 'yyyy-MM-dd')] = normalPattern;
@@ -557,8 +602,29 @@ export default function ShiftScheduler() {
           // Too few off days, convert some 'normal' to 'off'
           const workDays = daysInMonth.filter(day => newShiftData[staff.id][format(day, 'yyyy-MM-dd')] === normalPattern);
           
-          // Prioritize days with high staff count
-          workDays.sort((a, b) => getNewDailyCount(b, newShiftData) - getNewDailyCount(a, newShiftData));
+          // Prioritize days with high staff count, favor weekends/holidays,
+          // and prioritize breaking long consecutive work chains
+          workDays.sort((a, b) => {
+            const dateA = format(a, 'yyyy-MM-dd');
+            const dateB = format(b, 'yyyy-MM-dd');
+            const isWHA = getDay(a) === 0 || getDay(a) === 6 || !!holidays[dateA];
+            const isWHB = getDay(b) === 0 || getDay(b) === 6 || !!holidays[dateB];
+            
+            // 1. Prioritize breaking long consecutive work chains
+            const consA = getConsecutiveWork(staff.id, a, newShiftData);
+            const consB = getConsecutiveWork(staff.id, b, newShiftData);
+            if (consA !== consB) return consB - consA; // Higher consecutive work first
+            
+            // 2. Prioritize days with surplus staff relative to requirements
+            const reqA = dailyRequirements[dateA] ?? (getDay(a) === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT);
+            const reqB = dailyRequirements[dateB] ?? (getDay(b) === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT);
+            const surplusA = getNewDailyCount(a, newShiftData) - reqA;
+            const surplusB = getNewDailyCount(b, newShiftData) - reqB;
+            if (surplusA !== surplusB) return surplusB - surplusA;
+
+            if (isWHA !== isWHB) return isWHA ? -1 : 1; // Weekends/Holidays first
+            return 0;
+          });
 
           for (let i = 0; i < Math.abs(diff) && i < workDays.length; i++) {
             newShiftData[staff.id][format(workDays[i], 'yyyy-MM-dd')] = 'off';
@@ -594,6 +660,30 @@ export default function ShiftScheduler() {
             if (candidates.length > 0) {
               newShiftData[candidates[0]][dateStr] = normalPattern;
             }
+          }
+        });
+      });
+
+      // 8. Final Sweep: Force break any remaining max consecutive work violations
+      staffList.forEach(staff => {
+        let consecutive = 0;
+        daysInMonth.forEach((day, idx) => {
+          const dateStr = format(day, 'yyyy-MM-dd');
+          const p = shiftPatterns.find(pat => pat.id === newShiftData[staff.id][dateStr]);
+          
+          if (p?.type === 'work') {
+            consecutive++;
+            if (consecutive > constraints.maxConsecutiveWork) {
+              // Violation! Try to find a nearby 'off' day to swap with, or just force 'off'
+              // For simplicity, we force 'off' if it's not a fixed assignment or request
+              const currentVal = newShiftData[staff.id][dateStr];
+              if (currentVal === normalPattern && !newFixedCells[staff.id]?.[dateStr]) {
+                newShiftData[staff.id][dateStr] = 'off';
+                consecutive = 0;
+              }
+            }
+          } else {
+            consecutive = 0;
           }
         });
       });
@@ -739,12 +829,14 @@ export default function ShiftScheduler() {
           if (!newShiftData[staff.id][dateStr]) {
             const dayOfWeek = getDay(day);
             const isHoliday = !!holidays[dateStr];
-            const isWeekendOrHoliday = dayOfWeek === 0 || dayOfWeek === 6 || isHoliday;
+            const isWeekendOrHoliday = dayOfWeek === 0 || isHoliday;
             
             if (staff.isMaternityLeave) {
               newShiftData[staff.id][dateStr] = 'maternity-leave';
-            } else {
+            } else if (dayOfWeek === 0) {
               newShiftData[staff.id][dateStr] = 'off';
+            } else {
+              newShiftData[staff.id][dateStr] = 'normal';
             }
             changed = true;
           }
