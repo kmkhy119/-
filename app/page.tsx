@@ -828,76 +828,77 @@ export default function ShiftScheduler() {
   };
 
   return (
-    <div className={`min-h-screen bg-slate-50 flex flex-col ${isFullscreen ? 'p-0 h-screen' : 'p-0 sm:p-4 md:p-6 lg:p-8'}`}>
-      <div className={`w-full flex-1 flex flex-col ${isFullscreen ? 'space-y-0' : 'space-y-0 sm:space-y-6'}`}>
+    <div className={`h-screen bg-slate-50 flex flex-col overflow-hidden ${isFullscreen ? 'p-0' : 'p-0 sm:p-2 md:p-4'}`}>
+      <div className={`w-full flex-1 flex flex-col overflow-hidden ${isFullscreen ? 'space-y-0' : 'space-y-2'}`}>
         
         {/* Header */}
-        <header className={`flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 md:p-6 shadow-sm border-b border-slate-200 shrink-0 ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-indigo-600 rounded-xl text-white">
-              <CalendarIcon size={24} />
+        <header className={`flex flex-col md:flex-row md:items-center justify-between gap-2 bg-white px-3 py-1.5 shadow-sm border-b border-slate-200 shrink-0 ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-xl sm:border'}`}>
+          <div className="flex items-center gap-2">
+            <div className="p-1 bg-indigo-600 rounded text-white">
+              <CalendarIcon size={16} />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900">勤務表作成ツール</h1>
-              <p className="text-sm text-slate-500 font-bold">A作成</p>
+              <h1 className="text-sm font-bold text-slate-900 leading-none">勤務表作成ツール</h1>
+              <p className="text-[9px] text-indigo-600 font-bold leading-none mt-0.5">A作成</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-md">
             <button 
               onClick={handlePrevMonth}
-              className="p-2 hover:bg-white hover:shadow-sm rounded-md transition-all"
+              className="p-0.5 hover:bg-white hover:shadow-sm rounded transition-all"
             >
-              <ChevronLeft size={20} />
+              <ChevronLeft size={14} />
             </button>
-            <span className="px-4 font-semibold min-w-[120px] text-center">
+            <span className="px-1.5 font-bold text-[11px] min-w-[90px] text-center">
               {format(currentDate, 'yyyy年 MM月', { locale: ja })}
             </span>
             <button 
               onClick={handleNextMonth}
-              className="p-2 hover:bg-white hover:shadow-sm rounded-md transition-all"
+              className="p-0.5 hover:bg-white hover:shadow-sm rounded transition-all"
             >
-              <ChevronRight size={20} />
+              <ChevronRight size={14} />
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
             <button 
               onClick={toggleFullscreen}
-              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className="p-1 text-slate-500 hover:bg-slate-100 rounded transition-colors"
               title={isFullscreen ? "縮小" : "全画面表示"}
             >
-              {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+              {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
             </button>
             <button 
               onClick={exportToCSV}
-              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className="p-1 text-slate-500 hover:bg-slate-100 rounded transition-colors"
               title="CSVダウンロード"
             >
-              <Download size={20} />
+              <Download size={16} />
             </button>
             <button 
               onClick={() => setShowSettings(true)}
-              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className="p-1 text-slate-500 hover:bg-slate-100 rounded transition-colors"
               title="条件設定"
             >
-              <Settings size={20} />
+              <Settings size={16} />
             </button>
+            <div className="w-px h-4 bg-slate-200 mx-0.5" />
             <button 
               onClick={() => resetShifts(false)}
-              className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className="px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100 rounded transition-colors"
             >
               リセット
             </button>
             <button 
               onClick={generateShifts}
               disabled={isGenerating}
-              className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg shadow-indigo-200"
+              className="flex items-center gap-1 px-3 py-1 bg-indigo-600 text-white rounded text-[10px] font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-sm"
             >
               {isGenerating ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <Play size={18} fill="currentColor" />
+                <Play size={12} fill="currentColor" />
               )}
               自動作成
             </button>
@@ -1319,12 +1320,12 @@ export default function ShiftScheduler() {
         </AnimatePresence>
 
         {/* Main Content */}
-        <div className={`bg-white shadow-sm overflow-hidden flex-1 flex flex-col ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-2xl sm:border'}`}>
-          <div className="overflow-auto flex-1">
+        <div className={`bg-white shadow-sm overflow-hidden flex-1 flex flex-col border-t border-slate-200 ${isFullscreen ? 'rounded-none' : 'rounded-none sm:rounded-xl sm:border'}`}>
+          <div className="overflow-auto flex-1 bg-slate-50/30">
             <table className="w-full border-collapse table-fixed">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-40 h-[53px]">
-                  <th className="sticky left-0 z-50 bg-slate-50 p-2 text-left font-semibold text-slate-600 border-r border-slate-200 w-[240px]">
+                <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-40 h-[38px]">
+                  <th className="sticky left-0 z-50 bg-slate-200 p-2 text-left font-black text-slate-800 border-r border-slate-400 w-[160px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.2)]">
                     スタッフ
                   </th>
                   {daysInMonth.map(day => (
@@ -1332,36 +1333,36 @@ export default function ShiftScheduler() {
                       key={day.toISOString()} 
                       className={`p-1 text-center border-r border-slate-200 w-[45px] ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'bg-slate-100/50' : ''}`}
                     >
-                      <div className={`text-[10px] uppercase font-bold ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'text-rose-500' : 'text-slate-400'}`}>
+                      <div className={`text-[9px] uppercase font-bold ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'text-rose-500' : 'text-slate-400'}`}>
                         {getDayName(day)}
                       </div>
-                      <div className={`text-sm font-bold ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'text-rose-600' : 'text-slate-700'}`}>
+                      <div className={`text-xs font-bold ${(isWeekend(day) || holidays[format(day, 'yyyy-MM-dd')]) ? 'text-rose-600' : 'text-slate-700'}`}>
                         {format(day, 'd')}
                       </div>
                     </th>
                   ))}
-                  <th className="p-4 text-center font-semibold text-slate-600 min-w-[120px]">
+                  <th className="p-2 text-center font-semibold text-slate-600 w-[140px]">
                     統計
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {/* Daily Requirements Row */}
-                <tr className="bg-indigo-50/50 border-b border-slate-200 sticky top-[53px] z-30 h-[40px]">
-                  <td className="sticky left-0 z-40 bg-indigo-50 p-2 font-bold text-indigo-900 border-r border-slate-200 text-xs">
+                <tr className="bg-indigo-50 border-b border-slate-200 sticky top-[38px] z-30 h-[30px]">
+                  <td className="sticky left-0 z-50 bg-indigo-200 p-2 font-black text-indigo-950 border-r border-slate-400 text-[10px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.2)]">
                     必要人数
                   </td>
                   {daysInMonth.map(day => {
                     const dateStr = format(day, 'yyyy-MM-dd');
                     return (
-                      <td key={day.toISOString()} className="p-1 border-r border-slate-200">
+                      <td key={day.toISOString()} className="p-0.5 border-r border-slate-200">
                         <input 
                           type="number"
                           min="0"
                           max={staffList.length}
                           value={dailyRequirements[dateStr] ?? (getDay(day) === 0 ? 0 : DEFAULT_DAILY_REQUIREMENT)}
                           onChange={(e) => updateRequirement(day, e.target.value)}
-                          className="w-full text-center bg-transparent font-bold text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded text-sm"
+                          className="w-full text-center bg-transparent font-bold text-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded text-xs"
                         />
                       </td>
                     );
@@ -1370,8 +1371,8 @@ export default function ShiftScheduler() {
                 </tr>
 
                 {/* Actual Count Row */}
-                <tr className="bg-slate-50 border-b border-slate-200 sticky top-[93px] z-30 h-[40px]">
-                  <td className="sticky left-0 z-40 bg-slate-50 p-2 font-bold text-slate-600 border-r border-slate-200 text-xs">
+                <tr className="bg-slate-100 border-b border-slate-300 sticky top-[68px] z-30 h-[30px]">
+                  <td className="sticky left-0 z-50 bg-slate-300 p-2 font-black text-slate-900 border-r border-slate-400 text-[10px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.2)]">
                     現在の勤務
                   </td>
                   {daysInMonth.map(day => {
@@ -1382,7 +1383,7 @@ export default function ShiftScheduler() {
                     return (
                       <td 
                         key={day.toISOString()} 
-                        className={`p-2 text-center border-r border-slate-200 text-sm font-bold ${
+                        className={`p-1 text-center border-r border-slate-200 text-xs font-bold ${
                           isShort ? 'text-rose-600 bg-rose-100 animate-pulse' : 
                           isOver ? 'text-amber-600 bg-amber-50' : 
                           'text-emerald-600 bg-emerald-50'
@@ -1397,76 +1398,69 @@ export default function ShiftScheduler() {
 
                 {/* Staff Rows */}
                 {staffList.map((staff, idx) => {
-                  const staffMemos = fixedAssignments
-                    .filter(f => f.staffName === staff.name && f.memo)
-                    .map(f => f.memo)
-                    .filter((v, i, a) => a.indexOf(v) === i)
-                    .join(', ');
                   const stats = getStaffStats(staff.id);
                   return (
-                    <tr key={staff.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="sticky left-0 z-10 bg-white p-2 font-medium text-slate-700 border-r border-slate-200 group-hover:bg-slate-50">
-                        <div className="flex items-center gap-3">
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">
-                                {idx + 1}
-                              </div>
+                    <tr key={staff.id} className="border-b border-slate-200 hover:bg-indigo-50/20 transition-colors">
+                      <td className="sticky left-0 z-10 bg-white p-1 font-medium text-slate-700 border-r border-slate-400 group-hover:bg-slate-50 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.1)]">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1">
+                            <div className="w-4 h-4 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-bold text-slate-400">
+                              {idx + 1}
+                            </div>
+                            <input 
+                              value={staff.name}
+                              onChange={(e) => {
+                                const newName = e.target.value;
+                                setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, name: newName } : s));
+                              }}
+                              className="bg-transparent focus:outline-none focus:bg-white px-0.5 rounded border border-transparent focus:border-slate-200 flex-1 min-w-0 text-[11px] font-bold"
+                            />
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <span className="text-[8px] text-slate-400 font-bold">休:</span>
                               <input 
-                                value={staff.name}
+                                type="number"
+                                min="0"
+                                value={staff.targetOffCount}
                                 onChange={(e) => {
-                                  const newName = e.target.value;
-                                  setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, name: newName } : s));
+                                  const count = parseInt(e.target.value) || 0;
+                                  setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, targetOffCount: count } : s));
                                 }}
-                                className="bg-transparent focus:outline-none focus:bg-white px-1 rounded border border-transparent focus:border-slate-200 w-32 font-bold"
+                                className="w-6 text-[9px] bg-indigo-50 border border-indigo-100 rounded text-center focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-indigo-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
-                              <div className="flex items-center gap-1 ml-2 shrink-0">
-                                <span className="text-[10px] text-slate-400 font-bold">休み:</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between px-0.5">
+                            {[
+                              { id: 'duty', label: '当', checked: staff.canDoDuty, count: staff.historicalDutyCount, setter: 'canDoDuty', countSetter: 'historicalDutyCount' },
+                              { id: 'early700', label: '⑦', checked: staff.canDoEarly700, count: staff.historicalEarly700Count, setter: 'canDoEarly700', countSetter: 'historicalEarly700Count' },
+                              { id: 'early745', label: '45', checked: staff.canDoEarly745, count: staff.historicalEarly745Count, setter: 'canDoEarly745', countSetter: 'historicalEarly745Count' },
+                              { id: 'late', label: '遅', checked: staff.canDoLate, count: staff.historicalLateCount, setter: 'canDoLate', countSetter: 'historicalLateCount' },
+                            ].map(item => (
+                              <div key={item.id} className="flex flex-col items-center">
                                 <input 
-                                  type="number"
-                                  min="0"
-                                  value={staff.targetOffCount}
+                                  type="checkbox"
+                                  checked={item.checked}
                                   onChange={(e) => {
-                                    const count = parseInt(e.target.value) || 0;
-                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, targetOffCount: count } : s));
+                                    const checked = e.target.checked;
+                                    setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, [item.setter]: checked } : s));
                                   }}
-                                  className="w-10 text-xs bg-indigo-50 border border-indigo-200 rounded px-1 text-center focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-indigo-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  className="w-2.5 h-2.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                                 />
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-4 pl-8">
-                              {[
-                                { id: 'duty', label: '当', checked: staff.canDoDuty, count: staff.historicalDutyCount, setter: 'canDoDuty', countSetter: 'historicalDutyCount' },
-                                { id: 'early700', label: '⑦', checked: staff.canDoEarly700, count: staff.historicalEarly700Count, setter: 'canDoEarly700', countSetter: 'historicalEarly700Count' },
-                                { id: 'early745', label: '45', checked: staff.canDoEarly745, count: staff.historicalEarly745Count, setter: 'canDoEarly745', countSetter: 'historicalEarly745Count' },
-                                { id: 'late', label: '遅', checked: staff.canDoLate, count: staff.historicalLateCount, setter: 'canDoLate', countSetter: 'historicalLateCount' },
-                              ].map(item => (
-                                <div key={item.id} className="flex flex-col items-center gap-1">
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-[7px] text-slate-500 font-bold">{item.label}</span>
                                   <input 
-                                    type="checkbox"
-                                    checked={item.checked}
+                                    type="number"
+                                    min="0"
+                                    value={item.count}
                                     onChange={(e) => {
-                                      const checked = e.target.checked;
-                                      setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, [item.setter]: checked } : s));
+                                      const count = parseInt(e.target.value) || 0;
+                                      setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, [item.countSetter]: count } : s));
                                     }}
-                                    className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                    className="w-5 text-[7px] bg-slate-50 border border-slate-100 rounded text-center focus:outline-none focus:ring-1 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                   />
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-[10px] text-slate-500 font-bold">{item.label}</span>
-                                    <input 
-                                      type="number"
-                                      min="0"
-                                      value={item.count}
-                                      onChange={(e) => {
-                                        const count = parseInt(e.target.value) || 0;
-                                        setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, [item.countSetter]: count } : s));
-                                      }}
-                                      className="w-10 text-xs bg-slate-50 border border-slate-200 rounded px-1 text-center focus:outline-none focus:ring-1 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                    />
-                                  </div>
                                 </div>
-                              ))}
-                            </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       </td>
@@ -1499,25 +1493,25 @@ export default function ShiftScheduler() {
                         </td>
                       );
                     })}
-                    <td className="p-2 text-center text-[10px] text-slate-600">
+                    <td className="p-1 text-center text-[9px] text-slate-600 bg-slate-50/50">
                       {(() => {
                         const stats = getStaffStats(staff.id);
                         return (
-                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                            <div className="text-left">休: <span className={`font-bold ${stats.off > staff.targetOffCount ? 'text-rose-600' : 'text-slate-700'}`}>{stats.off}</span> / {staff.targetOffCount}</div>
-                            <div className="text-left">当: <span className="font-bold">{stats.duty}</span></div>
-                            <div className="text-left">⑦: <span className="font-bold">{stats.early700}</span></div>
-                            <div className="text-left">45: <span className="font-bold">{stats.early745}</span></div>
-                            <div className="text-left">通: <span className="font-bold">{stats.normal}</span></div>
-                            <div className="text-left">遅: <span className="font-bold">{stats.late}</span></div>
+                          <div className="grid grid-cols-2 gap-x-1 gap-y-0.5">
+                            <div className="text-left whitespace-nowrap">休:<span className={`font-bold ${stats.off > staff.targetOffCount ? 'text-rose-600' : 'text-slate-700'}`}>{stats.off}</span>/{staff.targetOffCount}</div>
+                            <div className="text-left">当:<span className="font-bold">{stats.duty}</span></div>
+                            <div className="text-left">⑦:<span className="font-bold">{stats.early700}</span></div>
+                            <div className="text-left">45:<span className="font-bold">{stats.early745}</span></div>
+                            <div className="text-left">通:<span className="font-bold">{stats.normal}</span></div>
+                            <div className="text-left">遅:<span className="font-bold">{stats.late}</span></div>
                             {stats.maternityLeave > 0 && (
-                              <div className="text-left text-pink-600">産: <span className="font-bold">{stats.maternityLeave}</span></div>
+                              <div className="text-left text-pink-600">産:<span className="font-bold">{stats.maternityLeave}</span></div>
                             )}
                             {stats.sickLeave > 0 && (
-                              <div className="text-left text-orange-600">病: <span className="font-bold">{stats.sickLeave}</span></div>
+                              <div className="text-left text-orange-600">病:<span className="font-bold">{stats.sickLeave}</span></div>
                             )}
                             {stats.longTermOff > 0 && (
-                              <div className="text-left text-emerald-600">長: <span className="font-bold">{stats.longTermOff}</span></div>
+                              <div className="text-left text-emerald-600">長:<span className="font-bold">{stats.longTermOff}</span></div>
                             )}
                           </div>
                         );
