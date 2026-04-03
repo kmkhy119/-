@@ -112,14 +112,16 @@ const getJapaneseHolidays = (year: number) => {
   return holidays;
 };
 
+interface PairConstraint {
+  id: string;
+  staffIds: string[];
+}
+
 interface Constraints {
   maxConsecutiveWork: number;
   dutyWeekendContinuous: boolean;
   earlyAfterDutyNormal: boolean;
-  pairConstraint: {
-    enabled: boolean;
-    staffIds: string[];
-  };
+  pairConstraints: PairConstraint[];
 }
 
 interface FixedAssignment {
@@ -181,10 +183,7 @@ export default function ShiftScheduler() {
     maxConsecutiveWork: 5,
     dutyWeekendContinuous: true,
     earlyAfterDutyNormal: true,
-    pairConstraint: {
-      enabled: false,
-      staffIds: ['', '', ''],
-    },
+    pairConstraints: [],
   });
   const [fixedAssignments, setFixedAssignments] = useState<FixedAssignment[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -204,9 +203,8 @@ export default function ShiftScheduler() {
     { id: 'off', name: '公休', label: '休', color: 'bg-slate-200', type: 'off' },
     { id: 'paid-leave', name: '年休', label: '年', color: 'bg-slate-200', type: 'off' },
     { id: 'request-off', name: '希望休み', label: '希', color: 'bg-slate-200', type: 'off' },
-    { id: 'maternity-leave', name: '長期産休', label: '産', color: 'bg-pink-100', type: 'off' },
-    { id: 'sick-leave', name: '病欠', label: '病', color: 'bg-orange-100', type: 'off' },
-    { id: 'long-term-off', name: '長期休暇', label: '長', color: 'bg-emerald-100', type: 'off' },
+    { id: 'maternity-leave', name: '産休', label: '産', color: 'bg-pink-100', type: 'off' },
+    { id: 'sick-long-term', name: '病欠・長期', label: '病', color: 'bg-orange-100', type: 'off' },
   ]);
   const [longTermLeaves, setLongTermLeaves] = useState<{
     id: string;
@@ -215,12 +213,7 @@ export default function ShiftScheduler() {
     startDate: string;
     endDate: string;
   }[]>([]);
-  const [newLongTermLeave, setNewLongTermLeave] = useState({
-    staffId: '',
-    patternId: 'maternity-leave',
-    startDate: format(new Date(), 'yyyy-MM-dd'),
-    endDate: format(new Date(), 'yyyy-MM-dd'),
-  });
+  const [newPair, setNewPair] = useState<string[]>(['', '']);
   const [selectedCell, setSelectedCell] = useState<{ staffId: string; dateStr: string } | null>(null);
 
   // --- Date Helpers ---
@@ -320,16 +313,7 @@ export default function ShiftScheduler() {
           
           const current = newShiftData[staff.id][dateStr];
           
-          // Check for long term leaves first
-          const longTermLeave = longTermLeaves.find(l => 
-            l.staffId === staff.id && 
-            dateStr >= l.startDate && 
-            dateStr <= l.endDate
-          );
-
-          if (longTermLeave) {
-            newShiftData[staff.id][dateStr] = longTermLeave.patternId;
-          } else if (current !== 'request-off' && current !== 'maternity-leave' && current !== 'sick-leave' && current !== 'long-term-off' && current !== 'paid-leave') {
+          if (current !== 'request-off' && current !== 'maternity-leave' && current !== 'sick-long-term' && current !== 'paid-leave') {
             newShiftData[staff.id][dateStr] = isWeekendOrHoliday ? 'off' : normalPattern;
           }
         });
@@ -582,9 +566,11 @@ export default function ShiftScheduler() {
         }
       });
 
-      // 7. Apply Pair Constraint (Ensure at least one of the pair works)
-      if (constraints.pairConstraint.enabled && constraints.pairConstraint.staffIds.some(id => id !== '')) {
-        const activeStaffIds = constraints.pairConstraint.staffIds.filter(id => id !== '');
+      // 7. Apply Pair Constraints (Ensure at least one of the pair works)
+      constraints.pairConstraints.forEach(pair => {
+        const activeStaffIds = pair.staffIds.filter(id => id !== '');
+        if (activeStaffIds.length < 2) return;
+
         daysInMonth.forEach(day => {
           const dateStr = format(day, 'yyyy-MM-dd');
           const dayOfWeek = getDay(day);
@@ -597,12 +583,11 @@ export default function ShiftScheduler() {
 
           if (workingStaff.length === 0) {
             // None of the selected staff are working. Force one to work.
-            // Pick the one with fewer total shifts who is NOT on request-off or paid-leave
             const candidates = activeStaffIds
               .filter(id => newShiftData[id][dateStr] !== 'request-off' && newShiftData[id][dateStr] !== 'paid-leave')
               .sort((a, b) => {
-                const countA = Object.values(newShiftData[a]).filter(v => v !== 'off' && v !== 'request-off' && v !== 'paid-leave').length;
-                const countB = Object.values(newShiftData[b]).filter(v => v !== 'off' && v !== 'request-off' && v !== 'paid-leave').length;
+                const countA = Object.values(newShiftData[a]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'work').length;
+                const countB = Object.values(newShiftData[b]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'work').length;
                 return countA - countB;
               });
 
@@ -611,7 +596,7 @@ export default function ShiftScheduler() {
             }
           }
         });
-      }
+      });
 
       setShiftData(newShiftData);
       setMessage({ text: '勤務表の作成が完了しました！', type: 'success' });
@@ -624,7 +609,7 @@ export default function ShiftScheduler() {
   };
 
   const exportToCSV = () => {
-    const headers = ['スタッフ', ...daysInMonth.map(d => format(d, 'd')), '休み数', '当番数', '⑦数', '45数', '通常数', '遅番数', '産休数', '病欠数', '長期休暇数'];
+    const headers = ['スタッフ', ...daysInMonth.map(d => format(d, 'd')), '休み数', '当番数', '⑦数', '45数', '通常数', '遅番数', '産休数', '病欠・長期数'];
     const rows = staffList.map(staff => {
       const row = [staff.name];
       daysInMonth.forEach(day => {
@@ -640,8 +625,7 @@ export default function ShiftScheduler() {
       row.push(stats.normal.toString());
       row.push(stats.late.toString());
       row.push(stats.maternityLeave.toString());
-      row.push(stats.sickLeave.toString());
-      row.push(stats.longTermOff.toString());
+      row.push(stats.sickLongTerm.toString());
       return row.join(',');
     });
 
@@ -757,16 +741,7 @@ export default function ShiftScheduler() {
             const isHoliday = !!holidays[dateStr];
             const isWeekendOrHoliday = dayOfWeek === 0 || dayOfWeek === 6 || isHoliday;
             
-            // Check for long-term leaves
-            const activeLeave = longTermLeaves.find(leave => 
-              leave.staffId === staff.id && 
-              dateStr >= leave.startDate && 
-              dateStr <= leave.endDate
-            );
-
-            if (activeLeave) {
-              newShiftData[staff.id][dateStr] = activeLeave.patternId;
-            } else if (staff.isMaternityLeave) {
+            if (staff.isMaternityLeave) {
               newShiftData[staff.id][dateStr] = 'maternity-leave';
             } else {
               newShiftData[staff.id][dateStr] = 'off';
@@ -778,7 +753,7 @@ export default function ShiftScheduler() {
       
       return changed ? newShiftData : prev;
     });
-  }, [staffList, daysInMonth, holidays, longTermLeaves]);
+  }, [staffList, daysInMonth, holidays]);
 
   const getDailyCount = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
@@ -801,8 +776,7 @@ export default function ShiftScheduler() {
       paidLeave: 0,
       requestOff: 0,
       maternityLeave: 0,
-      sickLeave: 0,
-      longTermOff: 0
+      sickLongTerm: 0,
     };
     
     const staffShifts = shiftData[staffId] || {};
@@ -821,8 +795,7 @@ export default function ShiftScheduler() {
       if (shiftId === 'paid-leave') stats.paidLeave++;
       if (shiftId === 'request-off') stats.requestOff++;
       if (shiftId === 'maternity-leave') stats.maternityLeave++;
-      if (shiftId === 'sick-leave') stats.sickLeave++;
-      if (shiftId === 'long-term-off') stats.longTermOff++;
+      if (shiftId === 'sick-long-term') stats.sickLongTerm++;
     });
     return stats;
   };
@@ -913,7 +886,7 @@ export default function ShiftScheduler() {
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
-                className="bg-white rounded-2xl p-6 w-full max-w-5xl shadow-2xl space-y-6"
+                className="bg-white rounded-2xl p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl space-y-6"
               >
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-bold flex items-center gap-2">
@@ -1047,111 +1020,108 @@ export default function ShiftScheduler() {
                     </div>
                   </div>
 
-                  <div className="pt-4 border-t border-slate-100 space-y-4">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      <CalendarIcon size={16} className="text-indigo-600" />
-                      長期休暇・産休・病欠の設定
-                    </h3>
+                  <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center gap-6">
+                    <div className="flex items-center gap-3">
+                      <label className="text-sm font-semibold text-slate-700 whitespace-nowrap">スタッフ人数</label>
+                      <input 
+                        type="number"
+                        min="1"
+                        max="30"
+                        value={staffCount}
+                        onChange={(e) => handleStaffCountChange(e.target.value)}
+                        className="w-20 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <label className="text-sm font-semibold text-slate-700 whitespace-nowrap">最大連勤数</label>
+                      <input 
+                        type="number"
+                        min="1"
+                        value={constraints.maxConsecutiveWork}
+                        onChange={(e) => setConstraints(prev => ({ ...prev, maxConsecutiveWork: parseInt(e.target.value) || 1 }))}
+                        className="w-20 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-100 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-semibold text-slate-700">ペア出勤条件</label>
+                    </div>
                     
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       <div className="flex flex-wrap items-end gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                          <div className="flex-1 min-w-[120px] space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold ml-1">スタッフ</label>
-                            <select 
-                              value={newLongTermLeave.staffId}
-                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, staffId: e.target.value }))}
-                              className="w-full text-xs p-2 border border-slate-200 rounded bg-white"
-                            >
-                              <option value="">スタッフを選択</option>
-                              {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
-                          </div>
-                          <div className="flex-1 min-w-[100px] space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold ml-1">理由</label>
-                            <select 
-                              value={newLongTermLeave.patternId}
-                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, patternId: e.target.value }))}
-                              className="w-full text-xs p-2 border border-slate-200 rounded bg-white"
-                            >
-                              <option value="maternity-leave">産休</option>
-                              <option value="sick-leave">病欠</option>
-                              <option value="long-term-off">長期休暇</option>
-                            </select>
-                          </div>
-                          <div className="flex-1 min-w-[130px] space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold ml-1">開始</label>
-                            <input 
-                              type="date"
-                              value={newLongTermLeave.startDate}
-                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, startDate: e.target.value }))}
-                              className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
-                            />
-                          </div>
-                          <div className="flex-1 min-w-[130px] space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold ml-1">終了</label>
-                            <input 
-                              type="date"
-                              value={newLongTermLeave.endDate}
-                              onChange={(e) => setNewLongTermLeave(prev => ({ ...prev, endDate: e.target.value }))}
-                              className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
-                            />
-                          </div>
-                          <button 
-                            onClick={() => {
-                              if (!newLongTermLeave.staffId) {
-                                setMessage({ text: 'スタッフを選択してください。', type: 'error' });
-                                return;
-                              }
-                              const id = `ltl-${Date.now()}`;
-                              setLongTermLeaves(prev => [...prev, { ...newLongTermLeave, id }]);
-                              
-                              // Automatically update shiftData for the current month if it overlaps
-                              setShiftData(prev => {
-                                const newData = { ...prev };
-                                const staff = staffList.find(s => s.id === newLongTermLeave.staffId);
-                                if (!staff) return prev;
-                                if (!newData[staff.id]) newData[staff.id] = {};
-                                
-                                daysInMonth.forEach(day => {
-                                  const dateStr = format(day, 'yyyy-MM-dd');
-                                  if (dateStr >= newLongTermLeave.startDate && dateStr <= newLongTermLeave.endDate) {
-                                    newData[staff.id][dateStr] = newLongTermLeave.patternId;
-                                  }
-                                });
-                                return newData;
-                              });
-                              
-                              setMessage({ text: '長期休暇を設定しました。', type: 'success' });
-                            }}
-                            className="px-4 py-2 text-xs font-bold bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors h-[34px]"
+                        <div className="flex-1 min-w-[120px] space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold ml-1">スタッフ1</label>
+                          <select 
+                            value={newPair[0]}
+                            onChange={(e) => setNewPair(prev => [e.target.value, prev[1]])}
+                            className="w-full text-xs p-2 border border-slate-200 rounded bg-white"
                           >
-                            追加
-                          </button>
+                            <option value="">スタッフを選択</option>
+                            {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
                         </div>
+                        <div className="flex-1 min-w-[120px] space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold ml-1">スタッフ2</label>
+                          <select 
+                            value={newPair[1]}
+                            onChange={(e) => setNewPair(prev => [prev[0], e.target.value])}
+                            className="w-full text-xs p-2 border border-slate-200 rounded bg-white"
+                          >
+                            <option value="">スタッフを選択</option>
+                            {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            if (!newPair[0] || !newPair[1]) {
+                              setMessage({ text: '2人のスタッフを選択してください。', type: 'error' });
+                              return;
+                            }
+                            if (newPair[0] === newPair[1]) {
+                              setMessage({ text: '異なるスタッフを選択してください。', type: 'error' });
+                              return;
+                            }
+                            const id = `pair-${Date.now()}`;
+                            setConstraints(prev => ({
+                              ...prev,
+                              pairConstraints: [...prev.pairConstraints, { id, staffIds: [...newPair] }]
+                            }));
+                            setNewPair(['', '']);
+                            setMessage({ text: 'ペアを追加しました。', type: 'success' });
+                          }}
+                          className="px-4 py-2 text-xs font-bold bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors h-[34px]"
+                        >
+                          追加
+                        </button>
+                      </div>
 
                       <div className="max-h-[120px] overflow-y-auto space-y-2 border border-slate-100 rounded-xl p-1.5 bg-slate-50/30">
-                        {longTermLeaves.length === 0 ? (
+                        {constraints.pairConstraints.length === 0 ? (
                           <div className="text-center py-4 text-slate-400 text-[10px] italic">
-                            設定済みの長期休暇はありません
+                            設定済みのペアはありません
                           </div>
                         ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
-                            {longTermLeaves.map((leave) => (
-                              <div key={leave.id} className="flex items-center justify-between px-2 py-1 bg-white border border-slate-100 rounded shadow-sm">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5">
+                            {constraints.pairConstraints.map((pair) => (
+                              <div key={pair.id} className="flex items-center justify-between px-2 py-1 bg-white border border-slate-100 rounded shadow-sm">
                                 <div className="flex items-center gap-1.5 overflow-hidden">
-                                  <span className="font-bold text-slate-700 text-[10px] truncate max-w-[60px]">
-                                    {staffList.find(s => s.id === leave.staffId)?.name}
+                                  <span className="font-bold text-slate-700 text-[10px] truncate">
+                                    {staffList.find(s => s.id === pair.staffIds[0])?.name}
                                   </span>
-                                  <span className={`px-1 rounded-[2px] text-[9px] text-white flex-shrink-0 ${shiftPatterns.find(p => p.id === leave.patternId)?.color}`}>
-                                    {shiftPatterns.find(p => p.id === leave.patternId)?.label}
-                                  </span>
-                                  <span className="text-[8px] text-slate-400 truncate">
-                                    {leave.startDate.split('-').slice(1).join('/')}〜
+                                  <span className="text-slate-300">×</span>
+                                  <span className="font-bold text-slate-700 text-[10px] truncate">
+                                    {staffList.find(s => s.id === pair.staffIds[1])?.name}
                                   </span>
                                 </div>
                                 <button 
                                   onClick={() => {
-                                    setLongTermLeaves(prev => prev.filter(l => l.id !== leave.id));
+                                    setConstraints(prev => ({
+                                      ...prev,
+                                      pairConstraints: prev.pairConstraints.filter(p => p.id !== pair.id)
+                                    }));
                                   }}
                                   className="p-0.5 text-slate-300 hover:text-rose-500 transition-colors ml-1"
                                 >
@@ -1162,71 +1132,8 @@ export default function ShiftScheduler() {
                           </div>
                         )}
                       </div>
-                      </div>
                     </div>
-
-                    <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center gap-6">
-                      <div className="flex items-center gap-3">
-                        <label className="text-sm font-semibold text-slate-700 whitespace-nowrap">スタッフ人数</label>
-                        <input 
-                          type="number"
-                          min="1"
-                          max="30"
-                          value={staffCount}
-                          onChange={(e) => handleStaffCountChange(e.target.value)}
-                          className="w-20 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <label className="text-sm font-semibold text-slate-700 whitespace-nowrap">最大連勤数</label>
-                        <input 
-                          type="number"
-                          min="1"
-                          value={constraints.maxConsecutiveWork}
-                          onChange={(e) => setConstraints(prev => ({ ...prev, maxConsecutiveWork: parseInt(e.target.value) || 1 }))}
-                          className="w-20 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-slate-100 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-sm font-semibold text-slate-700">ペア出勤条件</label>
-                        <button 
-                          onClick={() => setConstraints(prev => ({ 
-                            ...prev, 
-                            pairConstraint: { ...prev.pairConstraint, enabled: !prev.pairConstraint.enabled } 
-                          }))}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${constraints.pairConstraint.enabled ? 'bg-indigo-600' : 'bg-slate-200'}`}
-                        >
-                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${constraints.pairConstraint.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                      </div>
-                      
-                      {constraints.pairConstraint.enabled && (
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                          {[0, 1, 2].map(index => (
-                            <select 
-                              key={index}
-                              value={constraints.pairConstraint.staffIds[index]}
-                              onChange={(e) => setConstraints(prev => {
-                                const newIds = [...prev.pairConstraint.staffIds];
-                                newIds[index] = e.target.value;
-                                return { 
-                                  ...prev, 
-                                  pairConstraint: { ...prev.pairConstraint, staffIds: newIds } 
-                                };
-                              })}
-                              className="text-xs p-2 border border-slate-200 rounded-lg bg-white"
-                            >
-                              <option value="">スタッフ{index + 1}を選択</option>
-                              {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                  </div>
                   </div>
 
                   <div className="pt-4 border-t border-slate-100 space-y-3">
@@ -1507,11 +1414,8 @@ export default function ShiftScheduler() {
                             {stats.maternityLeave > 0 && (
                               <div className="text-left text-pink-600">産:<span className="font-bold">{stats.maternityLeave}</span></div>
                             )}
-                            {stats.sickLeave > 0 && (
-                              <div className="text-left text-orange-600">病:<span className="font-bold">{stats.sickLeave}</span></div>
-                            )}
-                            {stats.longTermOff > 0 && (
-                              <div className="text-left text-emerald-600">長:<span className="font-bold">{stats.longTermOff}</span></div>
+                            {stats.sickLongTerm > 0 && (
+                              <div className="text-left text-orange-600">病:<span className="font-bold">{stats.sickLongTerm}</span></div>
                             )}
                           </div>
                         );
