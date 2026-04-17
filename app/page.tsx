@@ -74,7 +74,7 @@ interface DailyRequirement {
 // --- Constants ---
 
 const INITIAL_STAFF_COUNT = 12;
-const DEFAULT_DAILY_REQUIREMENT = 7;
+const DEFAULT_DAILY_REQUIREMENT = 8;
 
 // --- Holiday Logic ---
 
@@ -317,7 +317,7 @@ export default function ShiftScheduler() {
           const current = newShiftData[staff.id][dateStr];
           
           if (current !== 'request-off' && current !== 'maternity-leave' && current !== 'sick-long-term' && current !== 'paid-leave') {
-            newShiftData[staff.id][dateStr] = isSunday ? 'off' : normalPattern;
+            newShiftData[staff.id][dateStr] = normalPattern;
           }
         });
       });
@@ -386,11 +386,12 @@ export default function ShiftScheduler() {
               (newShiftData[s.id][dateStr] === 'off' || newShiftData[s.id][dateStr] === normalPattern)
             );
             
-            // Sort by total shifts to balance (historical + current month)
+            // Sort by total shifts to balance (historical + current month) with some randomness
             available.sort((a, b) => {
               const countA = a.historicalDutyCount + Object.values(newShiftData[a.id]).filter(v => v === dutyPattern).length;
               const countB = b.historicalDutyCount + Object.values(newShiftData[b.id]).filter(v => v === dutyPattern).length;
-              return countA - countB;
+              if (countA !== countB) return countA - countB;
+              return Math.random() - 0.5;
             });
 
             candidate = available[0];
@@ -451,7 +452,8 @@ export default function ShiftScheduler() {
             available.sort((a, b) => {
               const countA = Object.values(newShiftData[a.id]).filter(v => v === early700Pattern || v === early745Pattern).length;
               const countB = Object.values(newShiftData[b.id]).filter(v => v === early700Pattern || v === early745Pattern).length;
-              return countA - countB;
+              if (countA !== countB) return countA - countB;
+              return Math.random() - 0.5;
             });
 
             if (available.length > 0) {
@@ -484,7 +486,8 @@ export default function ShiftScheduler() {
           available.sort((a, b) => {
             const countA = Object.values(newShiftData[a.id]).filter(v => v === latePattern).length;
             const countB = Object.values(newShiftData[b.id]).filter(v => v === latePattern).length;
-            return countA - countB;
+            if (countA !== countB) return countA - countB;
+            return Math.random() - 0.5;
           });
 
           if (available.length > 0) {
@@ -552,7 +555,8 @@ export default function ShiftScheduler() {
           available.sort((a, b) => {
             const offA = Object.values(newShiftData[a.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off' || !v).length;
             const offB = Object.values(newShiftData[b.id]).filter(v => shiftPatterns.find(p => p.id === v)?.type === 'off' || !v).length;
-            return offB - offA;
+            if (offA !== offB) return offB - offA;
+            return Math.random() - 0.5;
           });
 
           for (let i = 0; i < Math.min(required - currentWorking.length, available.length); i++) {
@@ -592,7 +596,10 @@ export default function ShiftScheduler() {
             if (consA !== consB) return consA - consB; // Lower consecutive work first
             
             if (isWHA !== isWHB) return isWHA ? 1 : -1; // Weekdays first
-            return getNewDailyCount(a, newShiftData) - getNewDailyCount(b, newShiftData);
+            
+            const countDiff = getNewDailyCount(a, newShiftData) - getNewDailyCount(b, newShiftData);
+            if (countDiff !== 0) return countDiff;
+            return Math.random() - 0.5;
           });
           
           for (let i = 0; i < diff && i < offDays.length; i++) {
@@ -623,7 +630,7 @@ export default function ShiftScheduler() {
             if (surplusA !== surplusB) return surplusB - surplusA;
 
             if (isWHA !== isWHB) return isWHA ? -1 : 1; // Weekends/Holidays first
-            return 0;
+            return Math.random() - 0.5;
           });
 
           for (let i = 0; i < Math.abs(diff) && i < workDays.length; i++) {
@@ -658,6 +665,8 @@ export default function ShiftScheduler() {
               });
 
             if (candidates.length > 0) {
+              // Add randomness to candidate selection
+              candidates.sort(() => Math.random() - 0.5);
               newShiftData[candidates[0]][dateStr] = normalPattern;
             }
           }
@@ -812,7 +821,7 @@ export default function ShiftScheduler() {
 
   // --- Effects ---
 
-  // Initialize shiftData with default 'normal' for weekdays if empty
+  // Initialize shiftData skeleton but keep cells empty (Clear) by default
   useEffect(() => {
     setShiftData(prev => {
       const newShiftData = { ...prev };
@@ -827,25 +836,18 @@ export default function ShiftScheduler() {
         daysInMonth.forEach(day => {
           const dateStr = format(day, 'yyyy-MM-dd');
           if (!newShiftData[staff.id][dateStr]) {
-            const dayOfWeek = getDay(day);
-            const isHoliday = !!holidays[dateStr];
-            const isWeekendOrHoliday = dayOfWeek === 0 || isHoliday;
-            
             if (staff.isMaternityLeave) {
               newShiftData[staff.id][dateStr] = 'maternity-leave';
-            } else if (dayOfWeek === 0) {
-              newShiftData[staff.id][dateStr] = 'off';
-            } else {
-              newShiftData[staff.id][dateStr] = 'normal';
+              changed = true;
             }
-            changed = true;
+            // Keep other cells empty (Clear)
           }
         });
       });
       
       return changed ? newShiftData : prev;
     });
-  }, [staffList, daysInMonth, holidays]);
+  }, [staffList, daysInMonth]);
 
   const getDailyCount = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
